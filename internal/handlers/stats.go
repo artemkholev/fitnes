@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"bytes"
 	"context"
 	"fitness-bot/internal/bot"
 	"fitness-bot/internal/charts"

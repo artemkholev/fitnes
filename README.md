@@ -49,17 +49,24 @@ fitnes/
 
 - Docker и Docker Compose
 - Telegram Bot Token (получить у [@BotFather](https://t.me/BotFather))
+- Go 1.21+ (для локальной разработки)
 
 ### Локальный запуск
 
 1. **Клонируйте репозиторий или скопируйте файлы на сервер**
 
-2. **Создайте .env файл**
+2. **Установите зависимости Go** (первый раз)
+```bash
+go mod download
+go mod tidy
+```
+
+3. **Создайте .env файл**
 ```bash
 cp .env.example .env
 ```
 
-3. **Отредактируйте .env файл**
+4. **Отредактируйте .env файл**
 ```bash
 nano .env
 ```
@@ -80,17 +87,17 @@ DB_NAME=fitness_bot
 APP_ENV=production
 ```
 
-4. **Запустите проект**
+5. **Запустите проект**
 ```bash
 docker-compose up -d
 ```
 
-5. **Проверьте логи**
+6. **Проверьте логи**
 ```bash
 docker-compose logs -f bot
 ```
 
-6. **Остановка проекта**
+7. **Остановка проекта**
 ```bash
 docker-compose down
 ```

@@ -110,8 +110,8 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	if message.Photo != nil && len(*message.Photo) > 0 {
-		photos := *message.Photo
+	if len(message.Photo) > 0 {
+		photos := message.Photo
 		photoFileID := photos[len(photos)-1].FileID
 		state.Data["photo_file_id"] = photoFileID
 		b.SendMessage(message.Chat.ID, "Фото сохранено! Теперь отправьте данные упражнения.")

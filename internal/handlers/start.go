@@ -3,7 +3,6 @@ package handlers
 import (
 	"context"
 	"fitness-bot/internal/bot"
-	"fitness-bot/internal/database"
 	"fitness-bot/internal/models"
 	"log"
 
@@ -40,8 +39,6 @@ func HandleStart(b *bot.Bot, message *tgbotapi.Message) {
 }
 
 func HandleRoleSelection(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
-
 	var role models.UserRole
 	switch message.Text {
 	case "👤 Клиент":

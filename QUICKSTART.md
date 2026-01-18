@@ -2,6 +2,12 @@
 
 ## За 5 минут до запуска
 
+### 0. Установите зависимости Go (первый раз)
+```bash
+go mod download
+go mod tidy
+```
+
 ### 1. Получите токен бота
 Откройте [@BotFather](https://t.me/BotFather) в Telegram:
 ```
