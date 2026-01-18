@@ -4,7 +4,6 @@ import (
 	"context"
 	"fitness-bot/internal/bot"
 	"fitness-bot/internal/charts"
-	"fitness-bot/internal/models"
 	"fmt"
 	"log"
 	"time"
@@ -13,21 +12,13 @@ import (
 )
 
 func HandleStats(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
-
-	user, err := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-	if err != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка при получении данных.")
-		return
-	}
-
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
 		"Введите название упражнения для просмотра прогресса:\n\nНапример: Жим лежа",
 		bot.GetCancelKeyboard(),
 	)
 	b.SetState(message.From.ID, "awaiting_exercise_name", map[string]interface{}{
-		"user_id": user.ID,
+		"telegram_id": message.From.ID,
 	})
 }
 
@@ -37,22 +28,22 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 
 	if message.Text == "❌ Отмена" {
 		b.ClearState(message.From.ID)
-		user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-		isTrainer := user.Role == models.RoleTrainer
-		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetMainMenuKeyboard(isTrainer))
+		// Определяем клавиатуру на основе доступов
+		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
 
 	exerciseName := message.Text
-	userID := state.Data["user_id"].(int64)
+	telegramID := state.Data["telegram_id"].(int64)
 
 	from := time.Now().AddDate(0, -3, 0)
 	to := time.Now()
 
-	exercises, err := b.DB.GetExerciseStats(ctx, userID, exerciseName, from, to)
+	exercises, err := b.DB.GetExerciseStats(ctx, telegramID, exerciseName, from, to)
 	if err != nil {
 		log.Printf("Error getting exercise stats: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при получении статистики.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении статистики.")
 		return
 	}
 
@@ -65,7 +56,7 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 	chartData, err := charts.GenerateProgressChart(exercises, exerciseName)
 	if err != nil {
 		log.Printf("Error generating chart: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при создании графика.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при создании графика.")
 		return
 	}
 
@@ -82,7 +73,7 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 	var statsText string
 	if len(exercises) > 0 {
 		latest := exercises[0]
-		statsText = fmt.Sprintf("\n📈 Последний результат:\n"+
+		statsText = fmt.Sprintf("\n📈 *Последний результат:*\n"+
 			"Вес: %.1f кг\n"+
 			"Подходы: %d\n"+
 			"Повторения: %d\n"+
@@ -95,6 +86,6 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	b.ClearState(message.From.ID)
-	user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-	b.SendMessageWithKeyboard(message.Chat.ID, statsText, bot.GetMainMenuKeyboard(user.Role == models.RoleTrainer))
+	accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+	b.SendMessageWithKeyboard(message.Chat.ID, statsText, bot.GetStartMenuKeyboard(accessInfo))
 }

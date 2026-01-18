@@ -10,17 +10,16 @@ services:
       POSTGRES_DB: ${DB_NAME:-fitness_bot}
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./migrations:/docker-entrypoint-initdb.d
-    ports:
-      - "5432:5432"
+      - ./migrations:/docker-entrypoint-initdb.d:ro
     networks:
       - fitness_network
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U fitness_user"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-fitness_user} -d ${DB_NAME:-fitness_bot}"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 10s
 
   bot:
     build:
@@ -29,6 +28,7 @@ services:
     container_name: fitness_bot
     environment:
       TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN}
+      ADMIN_USERNAME: ${ADMIN_USERNAME}
       DB_HOST: postgres
       DB_PORT: 5432
       DB_USER: ${DB_USER:-fitness_user}

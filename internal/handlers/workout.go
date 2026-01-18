@@ -11,21 +11,18 @@ import (
 	"time"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"github.com/jackc/pgx/v5"
 )
 
 func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 
-	user, err := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-	if err != nil {
-		if err == pgx.ErrNoRows {
-			b.SendMessage(message.Chat.ID, "Пожалуйста, сначала зарегистрируйтесь командой /start")
-			return
-		}
-		log.Printf("Error getting user: %v", err)
-		b.SendMessage(message.Chat.ID, "Произошла ошибка.")
-		return
+	// Получаем текущее состояние - там может быть trainer_client_id
+	state := b.GetState(message.From.ID)
+	var trainerClientID *int64
+
+	if state != nil && state.Data["trainer_client_id"] != nil {
+		id := state.Data["trainer_client_id"].(int64)
+		trainerClientID = &id
 	}
 
 	b.SendMessageWithKeyboard(
@@ -34,22 +31,24 @@ func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
 		bot.GetMuscleGroupKeyboard(),
 	)
 	b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
-		"user_id": user.ID,
+		"telegram_id":       message.From.ID,
+		"trainer_client_id": trainerClientID,
 	})
+
+	_ = ctx // Для совместимости
 }
 
 func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
+	ctx := context.Background()
+
 	if message.Text == "❌ Отмена" {
 		b.ClearState(message.From.ID)
-		ctx := context.Background()
-		user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-		isTrainer := user.Role == models.RoleTrainer
-		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetMainMenuKeyboard(isTrainer))
+		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
 
 	state := b.GetState(message.From.ID)
-	userID := state.Data["user_id"].(int64)
 
 	muscleGroupMap := map[string]models.MuscleGroup{
 		"💪 Грудь":   models.MuscleChest,
@@ -68,23 +67,30 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	ctx := context.Background()
+	var trainerClientID *int64
+	if state != nil && state.Data["trainer_client_id"] != nil {
+		if id, ok := state.Data["trainer_client_id"].(*int64); ok && id != nil {
+			trainerClientID = id
+		}
+	}
+
 	workout := &models.Workout{
-		UserID:      userID,
-		Date:        time.Now(),
-		MuscleGroup: muscleGroup,
+		TrainerClientID:  trainerClientID,
+		ClientTelegramID: message.From.ID,
+		Date:             time.Now(),
+		MuscleGroup:      muscleGroup,
 	}
 
 	if err := b.DB.CreateWorkout(ctx, workout); err != nil {
 		log.Printf("Error creating workout: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при создании тренировки.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при создании тренировки.")
 		return
 	}
 
 	b.SetState(message.From.ID, "adding_exercises", map[string]interface{}{
-		"workout_id": workout.ID,
-		"user_id":    userID,
-		"order":      1,
+		"workout_id":  workout.ID,
+		"telegram_id": message.From.ID,
+		"order":       1,
 	})
 
 	b.SendMessageWithKeyboard(
@@ -104,9 +110,8 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 
 	if message.Text == "❌ Отмена" || message.Text == "✅ Завершить" {
 		b.ClearState(message.From.ID)
-		user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-		isTrainer := user.Role == models.RoleTrainer
-		b.SendMessageWithKeyboard(message.Chat.ID, "Тренировка сохранена! 💪", bot.GetMainMenuKeyboard(isTrainer))
+		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+		b.SendMessageWithKeyboard(message.Chat.ID, "Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
 
@@ -120,7 +125,7 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 
 	lines := strings.Split(strings.TrimSpace(message.Text), "\n")
 	if len(lines) < 4 {
-		b.SendMessage(message.Chat.ID, "Неверный формат. Пожалуйста, укажите:\nНазвание\nПодходы\nПовторения\nВес")
+		b.SendMessage(message.Chat.ID, "❌ Неверный формат. Пожалуйста, укажите:\nНазвание\nПодходы\nПовторения\nВес")
 		return
 	}
 
@@ -130,7 +135,7 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 	weight, err3 := strconv.ParseFloat(strings.TrimSpace(lines[3]), 64)
 
 	if err1 != nil || err2 != nil || err3 != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка в числовых значениях. Проверьте формат.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка в числовых значениях. Проверьте формат.")
 		return
 	}
 
@@ -155,7 +160,7 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 
 	if err := b.DB.CreateExercise(ctx, exercise); err != nil {
 		log.Printf("Error creating exercise: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при сохранении упражнения.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при сохранении упражнения.")
 		return
 	}
 
@@ -166,16 +171,10 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 
-	user, err := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-	if err != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка при получении данных.")
-		return
-	}
-
-	workouts, err := b.DB.GetWorkoutsByUser(ctx, user.ID, 10)
+	workouts, err := b.DB.GetWorkoutsByClientTelegramID(ctx, message.From.ID, 10)
 	if err != nil {
 		log.Printf("Error getting workouts: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при получении тренировок.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении тренировок.")
 		return
 	}
 
@@ -185,7 +184,7 @@ func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	var response strings.Builder
-	response.WriteString("📝 Ваши последние тренировки:\n\n")
+	response.WriteString("📝 *Ваши последние тренировки:*\n\n")
 
 	for _, w := range workouts {
 		exercises, _ := b.DB.GetExercisesByWorkout(ctx, w.ID)

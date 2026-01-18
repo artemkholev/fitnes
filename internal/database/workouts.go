@@ -8,28 +8,28 @@ import (
 
 func (db *DB) CreateWorkout(ctx context.Context, workout *models.Workout) error {
 	query := `
-		INSERT INTO workouts (user_id, trainer_id, date, notes, muscle_group)
+		INSERT INTO workouts (trainer_client_id, client_telegram_id, date, notes, muscle_group)
 		VALUES ($1, $2, $3, $4, $5)
 		RETURNING id, created_at
 	`
 	return db.Pool.QueryRow(ctx, query,
-		workout.UserID,
-		workout.TrainerID,
+		workout.TrainerClientID,
+		workout.ClientTelegramID,
 		workout.Date,
 		workout.Notes,
 		workout.MuscleGroup,
 	).Scan(&workout.ID, &workout.CreatedAt)
 }
 
-func (db *DB) GetWorkoutsByUser(ctx context.Context, userID int64, limit int) ([]*models.Workout, error) {
+func (db *DB) GetWorkoutsByClientTelegramID(ctx context.Context, telegramID int64, limit int) ([]*models.Workout, error) {
 	query := `
-		SELECT id, user_id, trainer_id, date, notes, muscle_group, created_at
+		SELECT id, trainer_client_id, client_telegram_id, date, notes, muscle_group, created_at
 		FROM workouts
-		WHERE user_id = $1
+		WHERE client_telegram_id = $1
 		ORDER BY date DESC
 		LIMIT $2
 	`
-	rows, err := db.Pool.Query(ctx, query, userID, limit)
+	rows, err := db.Pool.Query(ctx, query, telegramID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -38,7 +38,7 @@ func (db *DB) GetWorkoutsByUser(ctx context.Context, userID int64, limit int) ([
 	var workouts []*models.Workout
 	for rows.Next() {
 		w := &models.Workout{}
-		if err := rows.Scan(&w.ID, &w.UserID, &w.TrainerID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.TrainerClientID, &w.ClientTelegramID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt); err != nil {
 			return nil, err
 		}
 		workouts = append(workouts, w)
@@ -46,14 +46,15 @@ func (db *DB) GetWorkoutsByUser(ctx context.Context, userID int64, limit int) ([
 	return workouts, rows.Err()
 }
 
-func (db *DB) GetWorkoutsByMuscleGroup(ctx context.Context, userID int64, muscleGroup models.MuscleGroup) ([]*models.Workout, error) {
+func (db *DB) GetWorkoutsByTrainerClient(ctx context.Context, trainerClientID int64, limit int) ([]*models.Workout, error) {
 	query := `
-		SELECT id, user_id, trainer_id, date, notes, muscle_group, created_at
+		SELECT id, trainer_client_id, client_telegram_id, date, notes, muscle_group, created_at
 		FROM workouts
-		WHERE user_id = $1 AND muscle_group = $2
+		WHERE trainer_client_id = $1
 		ORDER BY date DESC
+		LIMIT $2
 	`
-	rows, err := db.Pool.Query(ctx, query, userID, muscleGroup)
+	rows, err := db.Pool.Query(ctx, query, trainerClientID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -62,7 +63,31 @@ func (db *DB) GetWorkoutsByMuscleGroup(ctx context.Context, userID int64, muscle
 	var workouts []*models.Workout
 	for rows.Next() {
 		w := &models.Workout{}
-		if err := rows.Scan(&w.ID, &w.UserID, &w.TrainerID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt); err != nil {
+		if err := rows.Scan(&w.ID, &w.TrainerClientID, &w.ClientTelegramID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt); err != nil {
+			return nil, err
+		}
+		workouts = append(workouts, w)
+	}
+	return workouts, rows.Err()
+}
+
+func (db *DB) GetWorkoutsByMuscleGroup(ctx context.Context, telegramID int64, muscleGroup models.MuscleGroup) ([]*models.Workout, error) {
+	query := `
+		SELECT id, trainer_client_id, client_telegram_id, date, notes, muscle_group, created_at
+		FROM workouts
+		WHERE client_telegram_id = $1 AND muscle_group = $2
+		ORDER BY date DESC
+	`
+	rows, err := db.Pool.Query(ctx, query, telegramID, muscleGroup)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var workouts []*models.Workout
+	for rows.Next() {
+		w := &models.Workout{}
+		if err := rows.Scan(&w.ID, &w.TrainerClientID, &w.ClientTelegramID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt); err != nil {
 			return nil, err
 		}
 		workouts = append(workouts, w)
@@ -114,16 +139,16 @@ func (db *DB) GetExercisesByWorkout(ctx context.Context, workoutID int64) ([]*mo
 	return exercises, rows.Err()
 }
 
-func (db *DB) GetExerciseStats(ctx context.Context, userID int64, exerciseName string, from, to time.Time) ([]*models.Exercise, error) {
+func (db *DB) GetExerciseStats(ctx context.Context, telegramID int64, exerciseName string, from, to time.Time) ([]*models.Exercise, error) {
 	query := `
 		SELECT e.id, e.workout_id, e.name, e.sets, e.reps, e.weight,
 		       e.rest_seconds, e.photo_file_id, e.notes, e."order", e.created_at
 		FROM exercises e
 		JOIN workouts w ON e.workout_id = w.id
-		WHERE w.user_id = $1 AND e.name = $2 AND w.date BETWEEN $3 AND $4
+		WHERE w.client_telegram_id = $1 AND e.name = $2 AND w.date BETWEEN $3 AND $4
 		ORDER BY w.date DESC
 	`
-	rows, err := db.Pool.Query(ctx, query, userID, exerciseName, from, to)
+	rows, err := db.Pool.Query(ctx, query, telegramID, exerciseName, from, to)
 	if err != nil {
 		return nil, err
 	}
@@ -139,4 +164,21 @@ func (db *DB) GetExerciseStats(ctx context.Context, userID int64, exerciseName s
 		exercises = append(exercises, e)
 	}
 	return exercises, rows.Err()
+}
+
+// GetWorkoutByID возвращает тренировку по ID
+func (db *DB) GetWorkoutByID(ctx context.Context, id int64) (*models.Workout, error) {
+	w := &models.Workout{}
+	query := `
+		SELECT id, trainer_client_id, client_telegram_id, date, notes, muscle_group, created_at
+		FROM workouts
+		WHERE id = $1
+	`
+	err := db.Pool.QueryRow(ctx, query, id).Scan(
+		&w.ID, &w.TrainerClientID, &w.ClientTelegramID, &w.Date, &w.Notes, &w.MuscleGroup, &w.CreatedAt,
+	)
+	if err != nil {
+		return nil, err
+	}
+	return w, nil
 }

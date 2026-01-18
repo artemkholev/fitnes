@@ -13,30 +13,43 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
+// HandleGroupTrainings показывает групповые тренировки
 func HandleGroupTrainings(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 
-	user, err := b.DB.GetUserByTelegramID(ctx, message.From.ID)
+	// Получаем доступы пользователя
+	accessInfo, err := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
 	if err != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка при получении данных.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении данных.")
 		return
 	}
 
-	if user.OrganizationID == nil {
-		b.SendMessage(message.Chat.ID, "Вы не привязаны к организации.")
+	// Определяем организацию из текущего состояния
+	state := b.GetState(message.From.ID)
+	var orgID int64
+
+	if state != nil && state.Data["org_id"] != nil {
+		orgID = state.Data["org_id"].(int64)
+	} else if len(accessInfo.TrainerOrgs) > 0 {
+		orgID = accessInfo.TrainerOrgs[0].Organization.ID
+	} else if len(accessInfo.ClientAccess) > 0 {
+		orgID = accessInfo.ClientAccess[0].OrganizationID
+	} else {
+		b.SendMessage(message.Chat.ID, "❌ У вас нет доступа к организациям.")
 		return
 	}
 
-	trainings, err := b.DB.GetUpcomingGroupTrainings(ctx, *user.OrganizationID)
+	trainings, err := b.DB.GetUpcomingGroupTrainings(ctx, orgID)
 	if err != nil {
 		log.Printf("Error getting group trainings: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при получении тренировок.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении тренировок.")
 		return
 	}
 
 	if len(trainings) == 0 {
-		if user.Role == models.RoleTrainer {
-			b.SendMessage(message.Chat.ID, "Пока нет запланированных групповых тренировок.\n\nЧтобы создать, отправьте:\n/creategroup")
+		isTrainer := len(accessInfo.TrainerOrgs) > 0
+		if isTrainer {
+			b.SendMessage(message.Chat.ID, "Пока нет запланированных групповых тренировок.\n\nЧтобы создать, используйте команду в панели тренера.")
 		} else {
 			b.SendMessage(message.Chat.ID, "Пока нет запланированных групповых тренировок.")
 		}
@@ -44,34 +57,43 @@ func HandleGroupTrainings(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	var response strings.Builder
-	response.WriteString("📅 Предстоящие групповые тренировки:\n\n")
+	response.WriteString("📅 *Предстоящие групповые тренировки:*\n\n")
 
 	for i, training := range trainings {
 		count, _ := b.DB.GetParticipantCount(ctx, training.ID)
-		response.WriteString(fmt.Sprintf("%d. %s\n", i+1, training.Name))
+		response.WriteString(fmt.Sprintf("%d. *%s*\n", i+1, training.Name))
 		response.WriteString(fmt.Sprintf("   📝 %s\n", training.Description))
 		response.WriteString(fmt.Sprintf("   📅 %s\n", training.ScheduledAt.Format("02.01.2006 15:04")))
 		response.WriteString(fmt.Sprintf("   👥 %d/%d участников\n\n", count, training.MaxParticipants))
 	}
 
-	if user.Role == models.RoleClient {
+	// Клиенты могут записываться
+	if len(accessInfo.ClientAccess) > 0 {
 		response.WriteString("Чтобы записаться, отправьте номер тренировки.")
+
+		user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
+		userID := int64(0)
+		if user != nil {
+			userID = user.ID
+		}
+
 		b.SetState(message.From.ID, "joining_group_training", map[string]interface{}{
 			"trainings": trainings,
-			"user_id":   user.ID,
+			"user_id":   userID,
 		})
 	}
 
 	b.SendMessage(message.Chat.ID, response.String())
 }
 
+// HandleJoinGroupTraining записывает пользователя на групповую тренировку
 func HandleJoinGroupTraining(b *bot.Bot, message *tgbotapi.Message, trainingIdx int) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	trainings := state.Data["trainings"].([]*models.GroupTraining)
 	if trainingIdx < 1 || trainingIdx > len(trainings) {
-		b.SendMessage(message.Chat.ID, "Неверный номер. Попробуйте ещё раз.")
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер. Попробуйте ещё раз.")
 		return
 	}
 
@@ -80,7 +102,7 @@ func HandleJoinGroupTraining(b *bot.Bot, message *tgbotapi.Message, trainingIdx 
 
 	count, _ := b.DB.GetParticipantCount(ctx, training.ID)
 	if count >= training.MaxParticipants {
-		b.SendMessage(message.Chat.ID, "К сожалению, все места заняты.")
+		b.SendMessage(message.Chat.ID, "❌ К сожалению, все места заняты.")
 		b.ClearState(message.From.ID)
 		return
 	}
@@ -90,67 +112,79 @@ func HandleJoinGroupTraining(b *bot.Bot, message *tgbotapi.Message, trainingIdx 
 			b.SendMessage(message.Chat.ID, "Вы уже записаны на эту тренировку.")
 		} else {
 			log.Printf("Error joining training: %v", err)
-			b.SendMessage(message.Chat.ID, "Ошибка при записи.")
+			b.SendMessage(message.Chat.ID, "❌ Ошибка при записи.")
 		}
 		return
 	}
 
 	b.ClearState(message.From.ID)
-	user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
 		fmt.Sprintf("✅ Вы записаны на тренировку '%s'!", training.Name),
-		bot.GetMainMenuKeyboard(false),
+		bot.GetClientMenuKeyboard(),
 	)
-
-	trainer, _ := b.DB.GetUserByTelegramID(ctx, 0)
-	if trainer != nil {
-		notif := fmt.Sprintf("🔔 Новый участник %s записался на '%s'", user.FullName, training.Name)
-		b.SendMessage(trainer.TelegramID, notif)
-	}
 }
 
+// HandleCreateGroupTraining начинает создание групповой тренировки (для тренеров)
 func HandleCreateGroupTraining(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 
-	user, err := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-	if err != nil || user.Role != models.RoleTrainer {
-		b.SendMessage(message.Chat.ID, "Только тренеры могут создавать групповые тренировки.")
+	// Проверяем что пользователь тренер
+	accessInfo, err := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+	if err != nil || len(accessInfo.TrainerOrgs) == 0 {
+		b.SendMessage(message.Chat.ID, "❌ Только тренеры могут создавать групповые тренировки.")
 		return
 	}
 
-	if user.OrganizationID == nil {
-		b.SendMessage(message.Chat.ID, "Вы не привязаны к организации.")
+	state := b.GetState(message.From.ID)
+	var orgID, trainerID int64
+
+	if state != nil && state.Data["org_id"] != nil {
+		orgID = state.Data["org_id"].(int64)
+		trainerID = state.Data["trainer_id"].(int64)
+	} else {
+		// Берём первую активную организацию
+		for _, org := range accessInfo.TrainerOrgs {
+			if org.IsActive {
+				orgID = org.Organization.ID
+				trainerID = org.TrainerID
+				break
+			}
+		}
+	}
+
+	if orgID == 0 {
+		b.SendMessage(message.Chat.ID, "❌ Нет доступных организаций.")
 		return
 	}
 
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		"Создание групповой тренировки.\n\nОтправьте данные в формате:\n"+
+		"*Создание групповой тренировки*\n\nОтправьте данные в формате:\n"+
 			"Название\nОписание\nДата и время (ДД.ММ.ГГГГ ЧЧ:ММ)\nМакс. участников\n\n"+
 			"Например:\nФункциональный тренинг\nИнтенсивная тренировка\n25.01.2026 18:00\n15",
 		bot.GetCancelKeyboard(),
 	)
 	b.SetState(message.From.ID, "creating_group_training", map[string]interface{}{
-		"org_id":     *user.OrganizationID,
-		"trainer_id": user.ID,
+		"org_id":     orgID,
+		"trainer_id": trainerID,
 	})
 }
 
+// HandleCreateGroupTrainingData обрабатывает данные для создания групповой тренировки
 func HandleCreateGroupTrainingData(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	if message.Text == "❌ Отмена" {
 		b.ClearState(message.From.ID)
-		user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
-		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetMainMenuKeyboard(user.Role == models.RoleTrainer))
+		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetTrainerMenuKeyboard())
 		return
 	}
 
 	lines := strings.Split(strings.TrimSpace(message.Text), "\n")
 	if len(lines) < 4 {
-		b.SendMessage(message.Chat.ID, "Неверный формат. Проверьте данные.")
+		b.SendMessage(message.Chat.ID, "❌ Неверный формат. Проверьте данные.")
 		return
 	}
 
@@ -160,13 +194,13 @@ func HandleCreateGroupTrainingData(b *bot.Bot, message *tgbotapi.Message) {
 	maxParticipants, err := strconv.Atoi(strings.TrimSpace(lines[3]))
 
 	if err != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка в количестве участников.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка в количестве участников.")
 		return
 	}
 
 	scheduledAt, err := time.Parse("02.01.2006 15:04", dateStr)
 	if err != nil {
-		b.SendMessage(message.Chat.ID, "Ошибка в формате даты. Используйте ДД.ММ.ГГГГ ЧЧ:ММ")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка в формате даты. Используйте ДД.ММ.ГГГГ ЧЧ:ММ")
 		return
 	}
 
@@ -181,15 +215,14 @@ func HandleCreateGroupTrainingData(b *bot.Bot, message *tgbotapi.Message) {
 
 	if err := b.DB.CreateGroupTraining(ctx, training); err != nil {
 		log.Printf("Error creating group training: %v", err)
-		b.SendMessage(message.Chat.ID, "Ошибка при создании тренировки.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при создании тренировки.")
 		return
 	}
 
 	b.ClearState(message.From.ID)
-	user, _ := b.DB.GetUserByTelegramID(ctx, message.From.ID)
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
 		fmt.Sprintf("✅ Групповая тренировка '%s' создана!", name),
-		bot.GetMainMenuKeyboard(user.Role == models.RoleTrainer),
+		bot.GetTrainerMenuKeyboard(),
 	)
 }

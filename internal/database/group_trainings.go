@@ -55,7 +55,7 @@ func (db *DB) JoinGroupTraining(ctx context.Context, trainingID, userID int64) e
 
 func (db *DB) GetGroupTrainingParticipants(ctx context.Context, trainingID int64) ([]*models.User, error) {
 	query := `
-		SELECT u.id, u.telegram_id, u.username, u.full_name, u.role, u.organization_id, u.trainer_id, u.created_at
+		SELECT u.id, u.telegram_id, u.username, u.full_name, u.created_at
 		FROM users u
 		JOIN group_training_participants gtp ON u.id = gtp.user_id
 		WHERE gtp.group_training_id = $1
@@ -69,8 +69,7 @@ func (db *DB) GetGroupTrainingParticipants(ctx context.Context, trainingID int64
 	var users []*models.User
 	for rows.Next() {
 		u := &models.User{}
-		if err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FullName,
-			&u.Role, &u.OrganizationID, &u.TrainerID, &u.CreatedAt); err != nil {
+		if err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FullName, &u.CreatedAt); err != nil {
 			return nil, err
 		}
 		users = append(users, u)

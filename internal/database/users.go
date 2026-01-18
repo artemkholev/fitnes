@@ -5,26 +5,25 @@ import (
 	"fitness-bot/internal/models"
 )
 
+// CreateUser создаёт нового пользователя
 func (db *DB) CreateUser(ctx context.Context, user *models.User) error {
 	query := `
-		INSERT INTO users (telegram_id, username, full_name, role, organization_id, trainer_id)
-		VALUES ($1, $2, $3, $4, $5, $6)
+		INSERT INTO users (telegram_id, username, full_name)
+		VALUES ($1, $2, $3)
 		RETURNING id, created_at
 	`
 	return db.Pool.QueryRow(ctx, query,
 		user.TelegramID,
 		user.Username,
 		user.FullName,
-		user.Role,
-		user.OrganizationID,
-		user.TrainerID,
 	).Scan(&user.ID, &user.CreatedAt)
 }
 
+// GetUserByTelegramID получает пользователя по telegram_id
 func (db *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*models.User, error) {
 	user := &models.User{}
 	query := `
-		SELECT id, telegram_id, username, full_name, role, organization_id, trainer_id, created_at
+		SELECT id, telegram_id, username, full_name, created_at
 		FROM users
 		WHERE telegram_id = $1
 	`
@@ -33,9 +32,6 @@ func (db *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*model
 		&user.TelegramID,
 		&user.Username,
 		&user.FullName,
-		&user.Role,
-		&user.OrganizationID,
-		&user.TrainerID,
 		&user.CreatedAt,
 	)
 	if err != nil {
@@ -44,72 +40,37 @@ func (db *DB) GetUserByTelegramID(ctx context.Context, telegramID int64) (*model
 	return user, nil
 }
 
-func (db *DB) UpdateUserTrainer(ctx context.Context, userID, trainerID int64) error {
-	query := `UPDATE users SET trainer_id = $1 WHERE id = $2`
-	_, err := db.Pool.Exec(ctx, query, trainerID, userID)
+// EnsureUser создаёт или обновляет пользователя
+func (db *DB) EnsureUser(ctx context.Context, telegramID int64, username, fullName string) error {
+	username = NormalizeUsername(username)
+	query := `
+		INSERT INTO users (telegram_id, username, full_name)
+		VALUES ($1, $2, $3)
+		ON CONFLICT (telegram_id)
+		DO UPDATE SET username = EXCLUDED.username, full_name = EXCLUDED.full_name
+	`
+	_, err := db.Pool.Exec(ctx, query, telegramID, username, fullName)
 	return err
 }
 
-func (db *DB) GetTrainersByOrganization(ctx context.Context, orgID int64) ([]*models.User, error) {
+// GetUserByUsername получает пользователя по username
+func (db *DB) GetUserByUsername(ctx context.Context, username string) (*models.User, error) {
+	username = NormalizeUsername(username)
+	user := &models.User{}
 	query := `
-		SELECT id, telegram_id, username, full_name, role, organization_id, trainer_id, created_at
+		SELECT id, telegram_id, username, full_name, created_at
 		FROM users
-		WHERE role = 'trainer' AND organization_id = $1
+		WHERE username = $1
 	`
-	rows, err := db.Pool.Query(ctx, query, orgID)
+	err := db.Pool.QueryRow(ctx, query, username).Scan(
+		&user.ID,
+		&user.TelegramID,
+		&user.Username,
+		&user.FullName,
+		&user.CreatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var trainers []*models.User
-	for rows.Next() {
-		user := &models.User{}
-		if err := rows.Scan(
-			&user.ID,
-			&user.TelegramID,
-			&user.Username,
-			&user.FullName,
-			&user.Role,
-			&user.OrganizationID,
-			&user.TrainerID,
-			&user.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		trainers = append(trainers, user)
-	}
-	return trainers, rows.Err()
-}
-
-func (db *DB) GetClientsByTrainer(ctx context.Context, trainerID int64) ([]*models.User, error) {
-	query := `
-		SELECT id, telegram_id, username, full_name, role, organization_id, trainer_id, created_at
-		FROM users
-		WHERE trainer_id = $1
-	`
-	rows, err := db.Pool.Query(ctx, query, trainerID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var clients []*models.User
-	for rows.Next() {
-		user := &models.User{}
-		if err := rows.Scan(
-			&user.ID,
-			&user.TelegramID,
-			&user.Username,
-			&user.FullName,
-			&user.Role,
-			&user.OrganizationID,
-			&user.TrainerID,
-			&user.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		clients = append(clients, user)
-	}
-	return clients, rows.Err()
+	return user, nil
 }
