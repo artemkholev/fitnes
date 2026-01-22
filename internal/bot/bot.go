@@ -91,3 +91,80 @@ func (b *Bot) SendSuccess(chatID int64, text string, keyboard interface{}) {
 func (b *Bot) SendError(chatID int64, text string) {
 	b.SendMessage(chatID, "❌ "+text)
 }
+
+// SendInlineKeyboard отправляет сообщение с inline-клавиатурой и сохраняет его ID для очистки
+func (b *Bot) SendInlineKeyboard(chatID int64, text string, keyboard tgbotapi.InlineKeyboardMarkup) int {
+	msg := tgbotapi.NewMessage(chatID, text)
+	msg.ReplyMarkup = keyboard
+	msg.ParseMode = "Markdown"
+	sent, err := b.API.Send(msg)
+	if err != nil {
+		return 0
+	}
+	// Сохраняем ID сообщения для последующей очистки (в личных чатах chatID == telegramID)
+	b.StoreMessageID(chatID, sent.MessageID)
+	return sent.MessageID
+}
+
+// EditMessageText редактирует текст сообщения
+func (b *Bot) EditMessageText(chatID int64, messageID int, text string, keyboard *tgbotapi.InlineKeyboardMarkup) {
+	msg := tgbotapi.NewEditMessageText(chatID, messageID, text)
+	msg.ParseMode = "Markdown"
+	if keyboard != nil {
+		msg.ReplyMarkup = keyboard
+	}
+	b.API.Send(msg)
+}
+
+// DeleteMessage удаляет сообщение
+func (b *Bot) DeleteMessage(chatID int64, messageID int) {
+	del := tgbotapi.NewDeleteMessage(chatID, messageID)
+	b.API.Send(del)
+}
+
+// AnswerCallback отвечает на callback query
+func (b *Bot) AnswerCallback(callbackID string, text string) {
+	callback := tgbotapi.NewCallback(callbackID, text)
+	b.API.Send(callback)
+}
+
+// StoreMessageID сохраняет ID сообщения для последующего удаления
+func (b *Bot) StoreMessageID(telegramID int64, messageID int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.States[telegramID] != nil {
+		if b.States[telegramID].Data == nil {
+			b.States[telegramID].Data = make(map[string]interface{})
+		}
+		// Сохраняем список сообщений для удаления
+		var msgIDs []int
+		if existing, ok := b.States[telegramID].Data["_message_ids"].([]int); ok {
+			msgIDs = existing
+		}
+		msgIDs = append(msgIDs, messageID)
+		b.States[telegramID].Data["_message_ids"] = msgIDs
+	}
+}
+
+// CleanupMessages удаляет все сохранённые сообщения
+func (b *Bot) CleanupMessages(chatID int64, telegramID int64) {
+	b.mu.RLock()
+	var msgIDs []int
+	if state := b.States[telegramID]; state != nil && state.Data != nil {
+		if ids, ok := state.Data["_message_ids"].([]int); ok {
+			msgIDs = ids
+		}
+	}
+	b.mu.RUnlock()
+
+	for _, msgID := range msgIDs {
+		b.DeleteMessage(chatID, msgID)
+	}
+
+	// Очищаем список
+	b.mu.Lock()
+	if state := b.States[telegramID]; state != nil && state.Data != nil {
+		delete(state.Data, "_message_ids")
+	}
+	b.mu.Unlock()
+}

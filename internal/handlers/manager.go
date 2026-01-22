@@ -182,17 +182,23 @@ func HandleListTrainers(b *bot.Bot, message *tgbotapi.Message) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("🏋️ *Тренеры организации %s:*\n\n", orgName))
 
-	for i, t := range trainers {
+	// Создаём inline-клавиатуру
+	var items []string
+	var ids []int64
+	for _, t := range trainers {
 		status := "✅"
 		if !t.IsActive {
 			status = "❌"
 		}
-		sb.WriteString(fmt.Sprintf("%d. @%s %s\n", i+1, t.Username, status))
+		items = append(items, fmt.Sprintf("@%s %s", t.Username, status))
+		ids = append(ids, t.ID)
 	}
 
-	sb.WriteString("\nДля удаления тренера отправьте его номер.")
+	sb.WriteString("Выберите тренера для удаления:")
 
-	b.SendMessage(message.Chat.ID, sb.String())
+	keyboard := bot.GetInlineListKeyboard(items, ids, "trainer")
+	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
+
 	b.SetState(message.From.ID, "manager_removing_trainer", map[string]interface{}{
 		"org_id":   orgID,
 		"org_name": orgName,

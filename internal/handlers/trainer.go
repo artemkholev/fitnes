@@ -185,7 +185,10 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("👥 *Ваши клиенты в %s:*\n\n", orgName))
 
-	for i, c := range clients {
+	// Создаем inline-кнопки для каждого клиента
+	var items []string
+	var ids []int64
+	for _, c := range clients {
 		status := "✅"
 		if !c.Client.IsActive {
 			status = "❌"
@@ -193,21 +196,23 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 
 		name := c.Client.Username
 		if c.FullName != "" {
-			name = c.FullName + " (@" + c.Client.Username + ")"
+			name = c.FullName
 		}
 
 		workoutInfo := ""
 		if c.WorkoutCount > 0 {
-			workoutInfo = fmt.Sprintf(" | %d тренировок", c.WorkoutCount)
+			workoutInfo = fmt.Sprintf(" | %d 🏋️", c.WorkoutCount)
 		}
 
-		sb.WriteString(fmt.Sprintf("%d. %s %s%s\n", i+1, name, status, workoutInfo))
+		items = append(items, fmt.Sprintf("%s %s%s", name, status, workoutInfo))
+		ids = append(ids, c.Client.ID)
 	}
 
-	sb.WriteString("\n📊 Для просмотра клиента отправьте его номер.")
-	sb.WriteString("\n❌ Для удаления: удалить [номер]")
+	sb.WriteString("Выберите клиента для просмотра:")
 
-	b.SendMessage(message.Chat.ID, sb.String())
+	keyboard := bot.GetInlineListKeyboard(items, ids, "client")
+	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
+
 	b.SetState(message.From.ID, "trainer_viewing_clients", map[string]interface{}{
 		"trainer_id": state.Data["trainer_id"],
 		"org_id":     state.Data["org_id"],
@@ -334,18 +339,20 @@ func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
 		b.SendMessage(message.Chat.ID, fmt.Sprintf("📊 Статистика клиента @%s будет добавлена позже.", client.Client.Username))
 
 	case 2: // Создать тренировку
-		b.SetState(message.From.ID, "creating_workout_for_client", map[string]interface{}{
+		b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
 			"trainer_id":        trainerID,
 			"org_id":            orgID,
 			"org_name":          orgName,
 			"client":            client,
 			"trainer_client_id": client.Client.ID,
 		})
-		b.SendMessageWithKeyboard(
+		keyboard := bot.GetInlineMuscleGroupKeyboard()
+		msgID := b.SendInlineKeyboard(
 			message.Chat.ID,
 			fmt.Sprintf("➕ *Создание тренировки для @%s*\n\nВыберите группу мышц:", client.Client.Username),
-			bot.GetMuscleGroupKeyboard(),
+			keyboard,
 		)
+		b.StoreMessageID(message.From.ID, msgID)
 
 	case 3: // История тренировок
 		b.SendMessage(message.Chat.ID, fmt.Sprintf("📋 История тренировок @%s будет добавлена позже.", client.Client.Username))

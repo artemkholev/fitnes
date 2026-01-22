@@ -2,6 +2,8 @@ package bot
 
 import (
 	"fitness-bot/internal/models"
+	"strconv"
+	"strings"
 
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
@@ -189,4 +191,142 @@ func GetCancelKeyboard() tgbotapi.ReplyKeyboardMarkup {
 			tgbotapi.NewKeyboardButton("❌ Отмена"),
 		),
 	)
+}
+
+// ====== INLINE KEYBOARDS ======
+
+// GetInlineOrganizationsKeyboard создаёт inline-клавиатуру для выбора организации
+func GetInlineOrganizationsKeyboard(orgs []*models.Organization, prefix string) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, org := range orgs {
+		btn := tgbotapi.NewInlineKeyboardButtonData(
+			org.Name,
+			prefix+":"+string(rune(org.ID)),
+		)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", prefix+":cancel"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// GetInlineListKeyboard создаёт inline-клавиатуру из списка элементов
+func GetInlineListKeyboard(items []string, ids []int64, prefix string) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for i, item := range items {
+		var id int64
+		if i < len(ids) {
+			id = ids[i]
+		} else {
+			id = int64(i + 1)
+		}
+		btn := tgbotapi.NewInlineKeyboardButtonData(
+			item,
+			formatCallbackData(prefix, id),
+		)
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", prefix+":cancel"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// GetInlineMuscleGroupKeyboard создаёт inline-клавиатуру для выбора группы мышц
+func GetInlineMuscleGroupKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💪 Грудь", "muscle:chest"),
+			tgbotapi.NewInlineKeyboardButtonData("🦾 Спина", "muscle:back"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🦵 Ноги", "muscle:legs"),
+			tgbotapi.NewInlineKeyboardButtonData("🏋️ Плечи", "muscle:shoulders"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("💪 Бицепс", "muscle:biceps"),
+			tgbotapi.NewInlineKeyboardButtonData("💪 Трицепс", "muscle:triceps"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🎯 Пресс", "muscle:abs"),
+			tgbotapi.NewInlineKeyboardButtonData("🏃 Кардио", "muscle:cardio"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "muscle:cancel"),
+		),
+	)
+}
+
+// GetInlineClientActionsKeyboard создаёт inline-клавиатуру для действий с клиентом
+func GetInlineClientActionsKeyboard(clientID int64, isActive bool) tgbotapi.InlineKeyboardMarkup {
+	rows := [][]tgbotapi.InlineKeyboardButton{
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📊 Статистика", formatCallbackData("client_action", clientID)+":stats"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("➕ Создать тренировку", formatCallbackData("client_action", clientID)+":workout"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📋 История тренировок", formatCallbackData("client_action", clientID)+":history"),
+		),
+	}
+	if isActive {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Удалить клиента", formatCallbackData("client_action", clientID)+":delete"),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад", "client_action:back"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// GetInlineConfirmKeyboard создаёт inline-клавиатуру для подтверждения
+func GetInlineConfirmKeyboard(prefix string) tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Да", prefix+":confirm"),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Нет", prefix+":cancel"),
+		),
+	)
+}
+
+// GetInlineFinishKeyboard создаёт inline-клавиатуру для завершения добавления упражнений
+func GetInlineFinishKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Завершить тренировку", "exercise:finish"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отменить тренировку", "exercise:cancel"),
+		),
+	)
+}
+
+// formatCallbackData форматирует callback data с ID
+func formatCallbackData(prefix string, id int64) string {
+	return prefix + ":" + strconv.FormatInt(id, 10)
+}
+
+// ParseCallbackData разбирает callback data и возвращает prefix и id
+func ParseCallbackData(data string) (prefix string, id int64, action string) {
+	parts := strings.Split(data, ":")
+	if len(parts) < 2 {
+		return data, 0, ""
+	}
+	prefix = parts[0]
+	// Пробуем распарсить ID
+	if len(parts) >= 2 {
+		if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+			id = parsed
+			if len(parts) >= 3 {
+				action = parts[2]
+			}
+		} else {
+			// Если не число, это action
+			action = parts[1]
+		}
+	}
+	return
 }

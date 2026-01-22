@@ -121,19 +121,18 @@ func HandleListOrganizations(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	if len(orgs) == 0 {
-		b.SendWithCancel(message.Chat.ID, "Организаций пока нет. Создайте первую!")
+		b.SendMessage(message.Chat.ID, "Организаций пока нет. Создайте первую!")
 		return
 	}
 
 	var sb strings.Builder
 	sb.WriteString("*Список организаций:*\n\n")
 
-	for i, org := range orgs {
-		sb.WriteString(fmt.Sprintf("%d. *%s* (код: `%s`)\n", i+1, bot.EscapeMarkdown(org.Name), org.Code))
-	}
-	sb.WriteString("\nОтправьте номер организации для управления или нажмите «Отмена».")
+	// Создаём inline-клавиатуру
+	keyboard := bot.GetInlineOrganizationsKeyboard(orgs, "org")
+	sb.WriteString("Выберите организацию для управления:")
 
-	b.SendWithCancel(message.Chat.ID, sb.String())
+	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
 
 	b.SetState(message.From.ID, "admin_selecting_org", map[string]interface{}{
 		"organizations": orgs,
@@ -265,23 +264,29 @@ func HandleListManagers(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	if len(managers) == 0 {
-		b.SendWithCancel(message.Chat.ID, fmt.Sprintf("В организации *%s* пока нет менеджеров.", bot.EscapeMarkdown(orgName)))
+		b.SendMessage(message.Chat.ID, fmt.Sprintf("В организации *%s* пока нет менеджеров.", bot.EscapeMarkdown(orgName)))
 		return
 	}
 
 	var sb strings.Builder
 	sb.WriteString(fmt.Sprintf("*Менеджеры организации %s:*\n\n", bot.EscapeMarkdown(orgName)))
 
-	for i, m := range managers {
-		status := "неактивен"
-		if m.IsActive {
-			status = "активен"
+	// Создаём inline-клавиатуру
+	var items []string
+	var ids []int64
+	for _, m := range managers {
+		status := "✅"
+		if !m.IsActive {
+			status = "❌"
 		}
-		sb.WriteString(fmt.Sprintf("%d. @%s — %s\n", i+1, m.Username, status))
+		items = append(items, fmt.Sprintf("@%s %s", m.Username, status))
+		ids = append(ids, m.ID)
 	}
-	sb.WriteString("\nОтправьте номер для удаления или нажмите «Отмена».")
 
-	b.SendWithCancel(message.Chat.ID, sb.String())
+	sb.WriteString("Выберите менеджера для удаления:")
+
+	keyboard := bot.GetInlineListKeyboard(items, ids, "manager")
+	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
 
 	newData := bot.CopyStateData(state.Data)
 	newData["managers"] = managers

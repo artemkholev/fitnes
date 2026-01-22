@@ -14,28 +14,25 @@ import (
 )
 
 func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
-
 	// Получаем текущее состояние - там может быть trainer_client_id
 	state := b.GetState(message.From.ID)
-	var trainerClientID *int64
+	var trainerClientID int64
 
-	if state != nil && state.Data["trainer_client_id"] != nil {
-		id := state.Data["trainer_client_id"].(int64)
-		trainerClientID = &id
+	if state != nil && state.Data != nil {
+		if tcID, ok := bot.GetStateInt64(state.Data, "trainer_client_id"); ok {
+			trainerClientID = tcID
+		}
 	}
 
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		"Выберите группу мышц для тренировки:",
+		"🏋️ *Новая тренировка*\n\nВыберите группу мышц:",
 		bot.GetMuscleGroupKeyboard(),
 	)
 	b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
 		"telegram_id":       message.From.ID,
 		"trainer_client_id": trainerClientID,
 	})
-
-	_ = ctx // Для совместимости
 }
 
 func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
@@ -63,14 +60,20 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 
 	muscleGroup, ok := muscleGroupMap[message.Text]
 	if !ok {
-		b.SendMessage(message.Chat.ID, "Пожалуйста, выберите группу мышц из списка.")
+		b.SendMessageWithKeyboard(message.Chat.ID, "⚠️ Пожалуйста, выберите группу мышц из кнопок:", bot.GetMuscleGroupKeyboard())
 		return
 	}
 
+	// Безопасное извлечение trainer_client_id (может быть int64 или *int64)
 	var trainerClientID *int64
-	if state != nil && state.Data["trainer_client_id"] != nil {
-		if id, ok := state.Data["trainer_client_id"].(*int64); ok && id != nil {
-			trainerClientID = id
+	if state != nil && state.Data != nil {
+		// Пробуем как int64
+		if tcID, ok := bot.GetStateInt64(state.Data, "trainer_client_id"); ok && tcID > 0 {
+			trainerClientID = &tcID
+		}
+		// Пробуем как *int64
+		if tcID, ok := state.Data["trainer_client_id"].(*int64); ok && tcID != nil {
+			trainerClientID = tcID
 		}
 	}
 
@@ -82,8 +85,8 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	if err := b.DB.CreateWorkout(ctx, workout); err != nil {
-		log.Printf("Error creating workout: %v", err)
-		b.SendMessage(message.Chat.ID, "❌ Ошибка при создании тренировки.")
+		log.Printf("Error creating workout (trainer_client_id=%v, telegram_id=%d): %v", trainerClientID, message.From.ID, err)
+		b.SendMessage(message.Chat.ID, "❌ Ошибка при создании тренировки. Попробуйте позже.")
 		return
 	}
 
@@ -111,7 +114,12 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 	if message.Text == "❌ Отмена" || message.Text == "✅ Завершить" {
 		b.ClearState(message.From.ID)
 		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
-		b.SendMessageWithKeyboard(message.Chat.ID, "Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
+		b.SendMessageWithKeyboard(message.Chat.ID, "✅ Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
+		return
+	}
+
+	if state == nil || state.Data == nil {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка. Начните тренировку заново.")
 		return
 	}
 
@@ -119,13 +127,13 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 		photos := message.Photo
 		photoFileID := photos[len(photos)-1].FileID
 		state.Data["photo_file_id"] = photoFileID
-		b.SendMessage(message.Chat.ID, "Фото сохранено! Теперь отправьте данные упражнения.")
+		b.SendMessage(message.Chat.ID, "📷 Фото сохранено! Теперь отправьте данные упражнения.")
 		return
 	}
 
 	lines := strings.Split(strings.TrimSpace(message.Text), "\n")
 	if len(lines) < 4 {
-		b.SendMessage(message.Chat.ID, "❌ Неверный формат. Пожалуйста, укажите:\nНазвание\nПодходы\nПовторения\nВес")
+		b.SendMessage(message.Chat.ID, "❌ Неверный формат. Укажите:\n\nНазвание\nПодходы\nПовторения\nВес (кг)")
 		return
 	}
 
@@ -135,12 +143,20 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 	weight, err3 := strconv.ParseFloat(strings.TrimSpace(lines[3]), 64)
 
 	if err1 != nil || err2 != nil || err3 != nil {
-		b.SendMessage(message.Chat.ID, "❌ Ошибка в числовых значениях. Проверьте формат.")
+		b.SendMessage(message.Chat.ID, "❌ Ошибка в числовых значениях. Проверьте формат:\n\nНазвание\n4\n10\n80")
 		return
 	}
 
-	workoutID := state.Data["workout_id"].(int64)
-	order := state.Data["order"].(int)
+	workoutID, okW := bot.GetStateInt64(state.Data, "workout_id")
+	if !okW {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка. Начните тренировку заново.")
+		return
+	}
+
+	order := 1
+	if o, ok := state.Data["order"].(int); ok {
+		order = o
+	}
 
 	photoFileID := ""
 	if photo, ok := state.Data["photo_file_id"].(string); ok {
