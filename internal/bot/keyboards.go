@@ -17,15 +17,29 @@ func GetStartMenuKeyboard(accessInfo *models.AccessInfo) tgbotapi.ReplyKeyboardM
 		))
 	}
 
-	// Менеджер
-	if len(accessInfo.ManagerOrgs) > 0 {
+	// Менеджер - проверяем наличие активных организаций
+	hasActiveManager := false
+	for _, org := range accessInfo.ManagerOrgs {
+		if org.IsActive {
+			hasActiveManager = true
+			break
+		}
+	}
+	if hasActiveManager {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("🏢 Управление организацией"),
 		))
 	}
 
-	// Тренер
-	if len(accessInfo.TrainerOrgs) > 0 {
+	// Тренер - проверяем наличие активных организаций
+	hasActiveTrainer := false
+	for _, org := range accessInfo.TrainerOrgs {
+		if org.IsActive {
+			hasActiveTrainer = true
+			break
+		}
+	}
+	if hasActiveTrainer {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("🏋️ Панель тренера"),
 		))

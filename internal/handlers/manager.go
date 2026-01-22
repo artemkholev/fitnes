@@ -68,10 +68,14 @@ func showManagerOrgMenu(b *bot.Bot, message *tgbotapi.Message, orgID int64, orgN
 // HandleManagerSelectOrg выбор организации менеджером
 func HandleManagerSelectOrg(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
-	orgs := state.Data["organizations"].([]*models.ManagerOrgInfo)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список организаций устарел. Попробуйте снова.")
+		return
+	}
 
-	if idx < 1 || idx > len(orgs) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	orgs, ok := state.Data["organizations"].([]*models.ManagerOrgInfo)
+	if !ok || len(orgs) == 0 || idx < 1 || idx > len(orgs) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер или список устарел.")
 		return
 	}
 
@@ -82,15 +86,22 @@ func HandleManagerSelectOrg(b *bot.Bot, message *tgbotapi.Message, idx int) {
 // HandleAddTrainer начинает добавление тренера
 func HandleAddTrainer(b *bot.Bot, message *tgbotapi.Message) {
 	state := b.GetState(message.From.ID)
-	if state == nil || state.Data["org_id"] == nil {
+	if state == nil {
 		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
 		return
 	}
 
-	b.SetState(message.From.ID, "manager_adding_trainer", state.Data)
+	_, okID := bot.GetStateInt64(state.Data, "org_id")
+	_, okName := bot.GetStateString(state.Data, "org_name")
+	if !okID || !okName {
+		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
+		return
+	}
+
+	b.SetState(message.From.ID, "manager_adding_trainer", bot.CopyStateData(state.Data))
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		"Введите @username тренера (например: @trainer_ivan):",
+		"Введите @username тренера (например: @trainer\\_ivan):",
 		bot.GetCancelKeyboard(),
 	)
 }
@@ -100,32 +111,41 @@ func HandleAddTrainerUsername(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
+	// Безопасное извлечение данных
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okID || !okName {
+		b.ClearState(message.From.ID)
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния. Попробуйте снова.")
+		return
+	}
+
 	if message.Text == "❌ Отмена" {
-		orgID := state.Data["org_id"].(int64)
-		orgName := state.Data["org_name"].(string)
 		showManagerOrgMenu(b, message, orgID, orgName)
 		return
 	}
 
 	username := database.NormalizeUsername(message.Text)
 	if username == "" {
-		b.SendMessage(message.Chat.ID, "❌ Некорректный username. Введите в формате @username:")
+		b.SendWithCancel(message.Chat.ID, "❌ Некорректный username. Введите в формате @username:")
 		return
 	}
 
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
-
 	if err := b.DB.AddTrainer(ctx, orgID, username); err != nil {
 		log.Printf("Error adding trainer: %v", err)
-		b.SendMessage(message.Chat.ID, "❌ Ошибка при добавлении тренера.")
+		errStr := err.Error()
+		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
+			b.SendWithCancel(message.Chat.ID, fmt.Sprintf("⚠️ @%s уже является тренером этой организации.", username))
+		} else {
+			b.SendWithCancel(message.Chat.ID, "❌ Ошибка при добавлении тренера.")
+		}
 		return
 	}
 
 	showManagerOrgMenu(b, message, orgID, orgName)
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		fmt.Sprintf("✅ Тренер @%s добавлен в организацию *%s*", username, orgName),
+		fmt.Sprintf("✅ Тренер @%s добавлен в организацию *%s*\n\nКогда тренер напишет боту, он получит доступ.", username, bot.EscapeMarkdown(orgName)),
 		bot.GetManagerMenuKeyboard(),
 	)
 }
@@ -133,14 +153,19 @@ func HandleAddTrainerUsername(b *bot.Bot, message *tgbotapi.Message) {
 // HandleListTrainers показывает список тренеров
 func HandleListTrainers(b *bot.Bot, message *tgbotapi.Message) {
 	state := b.GetState(message.From.ID)
-	if state == nil || state.Data["org_id"] == nil {
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
+		return
+	}
+
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okID || !okName {
 		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
 		return
 	}
 
 	ctx := context.Background()
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
 
 	trainers, err := b.DB.GetOrganizationTrainers(ctx, orgID)
 	if err != nil {
@@ -179,12 +204,21 @@ func HandleListTrainers(b *bot.Bot, message *tgbotapi.Message) {
 func HandleRemoveTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
-	trainers := state.Data["trainers"].([]*models.OrganizationTrainer)
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
+		return
+	}
 
-	if idx < 1 || idx > len(trainers) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	trainers, ok := state.Data["trainers"].([]*models.OrganizationTrainer)
+	if !ok || len(trainers) == 0 || idx < 1 || idx > len(trainers) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер или список устарел.")
+		return
+	}
+
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okID || !okName {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния.")
 		return
 	}
 
@@ -198,7 +232,7 @@ func HandleRemoveTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	showManagerOrgMenu(b, message, orgID, orgName)
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		fmt.Sprintf("✅ Тренер @%s удалён из организации *%s*\n\n⚠️ Его клиенты смогут просматривать историю тренировок.", trainer.Username, orgName),
+		fmt.Sprintf("✅ Тренер @%s удалён из организации *%s*\n\n⚠️ Его клиенты смогут просматривать историю тренировок.", trainer.Username, bot.EscapeMarkdown(orgName)),
 		bot.GetManagerMenuKeyboard(),
 	)
 }

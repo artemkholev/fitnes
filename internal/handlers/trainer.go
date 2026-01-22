@@ -69,10 +69,14 @@ func showTrainerOrgMenu(b *bot.Bot, message *tgbotapi.Message, trainerID, orgID 
 // HandleTrainerSelectOrg выбор организации тренером
 func HandleTrainerSelectOrg(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
-	orgs := state.Data["organizations"].([]*models.TrainerOrgInfo)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список организаций устарел. Попробуйте снова.")
+		return
+	}
 
-	if idx < 1 || idx > len(orgs) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	orgs, ok := state.Data["organizations"].([]*models.TrainerOrgInfo)
+	if !ok || len(orgs) == 0 || idx < 1 || idx > len(orgs) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер или список устарел.")
 		return
 	}
 
@@ -83,15 +87,23 @@ func HandleTrainerSelectOrg(b *bot.Bot, message *tgbotapi.Message, idx int) {
 // HandleAddClient начинает добавление клиента
 func HandleAddClient(b *bot.Bot, message *tgbotapi.Message) {
 	state := b.GetState(message.From.ID)
-	if state == nil || state.Data["trainer_id"] == nil {
+	if state == nil {
 		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
 		return
 	}
 
-	b.SetState(message.From.ID, "trainer_adding_client", state.Data)
+	_, okT := bot.GetStateInt64(state.Data, "trainer_id")
+	_, okID := bot.GetStateInt64(state.Data, "org_id")
+	_, okName := bot.GetStateString(state.Data, "org_name")
+	if !okT || !okID || !okName {
+		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
+		return
+	}
+
+	b.SetState(message.From.ID, "trainer_adding_client", bot.CopyStateData(state.Data))
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		"Введите @username клиента (например: @client_ivan):",
+		"Введите @username клиента (например: @client\\_ivan):",
 		bot.GetCancelKeyboard(),
 	)
 }
@@ -101,27 +113,35 @@ func HandleAddClientUsername(b *bot.Bot, message *tgbotapi.Message) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
+	// Безопасное извлечение данных
+	trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okT || !okID || !okName {
+		b.ClearState(message.From.ID)
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния. Попробуйте снова.")
+		return
+	}
+
 	if message.Text == "❌ Отмена" {
-		trainerID := state.Data["trainer_id"].(int64)
-		orgID := state.Data["org_id"].(int64)
-		orgName := state.Data["org_name"].(string)
 		showTrainerOrgMenu(b, message, trainerID, orgID, orgName)
 		return
 	}
 
 	username := database.NormalizeUsername(message.Text)
 	if username == "" {
-		b.SendMessage(message.Chat.ID, "❌ Некорректный username. Введите в формате @username:")
+		b.SendWithCancel(message.Chat.ID, "❌ Некорректный username. Введите в формате @username:")
 		return
 	}
 
-	trainerID := state.Data["trainer_id"].(int64)
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
-
 	if err := b.DB.AddClient(ctx, trainerID, username); err != nil {
 		log.Printf("Error adding client: %v", err)
-		b.SendMessage(message.Chat.ID, "❌ Ошибка при добавлении клиента.")
+		errStr := err.Error()
+		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
+			b.SendWithCancel(message.Chat.ID, fmt.Sprintf("⚠️ @%s уже ваш клиент.", username))
+		} else {
+			b.SendWithCancel(message.Chat.ID, "❌ Ошибка при добавлении клиента.")
+		}
 		return
 	}
 
@@ -136,14 +156,19 @@ func HandleAddClientUsername(b *bot.Bot, message *tgbotapi.Message) {
 // HandleListClients показывает список клиентов тренера
 func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 	state := b.GetState(message.From.ID)
-	if state == nil || state.Data["trainer_id"] == nil {
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
+		return
+	}
+
+	trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okT || !okName {
 		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
 		return
 	}
 
 	ctx := context.Background()
-	trainerID := state.Data["trainer_id"].(int64)
-	orgName := state.Data["org_name"].(string)
 
 	clients, err := b.DB.GetTrainerClients(ctx, trainerID)
 	if err != nil {
@@ -194,10 +219,14 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 // HandleSelectClient выбор клиента для просмотра
 func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
-	clients := state.Data["clients"].([]*models.ClientWithInfo)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список клиентов устарел. Попробуйте снова.")
+		return
+	}
 
-	if idx < 1 || idx > len(clients) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	clients, ok := state.Data["clients"].([]*models.ClientWithInfo)
+	if !ok || len(clients) == 0 || idx < 1 || idx > len(clients) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер или список устарел.")
 		return
 	}
 
@@ -243,13 +272,22 @@ func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
-	clients := state.Data["clients"].([]*models.ClientWithInfo)
-	trainerID := state.Data["trainer_id"].(int64)
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список клиентов устарел.")
+		return
+	}
 
-	if idx < 1 || idx > len(clients) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	clients, ok := state.Data["clients"].([]*models.ClientWithInfo)
+	if !ok || len(clients) == 0 || idx < 1 || idx > len(clients) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер или список устарел.")
+		return
+	}
+
+	trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okT || !okID || !okName {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния.")
 		return
 	}
 
@@ -272,10 +310,24 @@ func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
 func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
 	ctx := context.Background()
 	state := b.GetState(message.From.ID)
-	client := state.Data["client"].(*models.ClientWithInfo)
-	trainerID := state.Data["trainer_id"].(int64)
-	orgID := state.Data["org_id"].(int64)
-	orgName := state.Data["org_name"].(string)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния. Попробуйте снова.")
+		return
+	}
+
+	client, ok := state.Data["client"].(*models.ClientWithInfo)
+	if !ok || client == nil {
+		b.SendMessage(message.Chat.ID, "❌ Клиент не выбран.")
+		return
+	}
+
+	trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
+	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
+	orgName, okName := bot.GetStateString(state.Data, "org_name")
+	if !okT || !okID || !okName {
+		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния.")
+		return
+	}
 
 	switch action {
 	case 1: // Статистика

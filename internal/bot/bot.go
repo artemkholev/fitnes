@@ -35,7 +35,6 @@ func NewBot(token string, db *database.DB, adminUsername string) (*Bot, error) {
 	}, nil
 }
 
-// IsAdmin проверяет является ли пользователь админом
 func (b *Bot) IsAdmin(username string) bool {
 	normalized := strings.TrimPrefix(strings.TrimSpace(username), "@")
 	return strings.EqualFold(normalized, b.AdminUsername)
@@ -79,4 +78,16 @@ func (b *Bot) SendMessageMarkdown(chatID int64, text string) {
 	msg := tgbotapi.NewMessage(chatID, text)
 	msg.ParseMode = "Markdown"
 	b.API.Send(msg)
+}
+
+func (b *Bot) SendWithCancel(chatID int64, text string) {
+	b.SendMessageWithKeyboard(chatID, text, GetCancelKeyboard())
+}
+
+func (b *Bot) SendSuccess(chatID int64, text string, keyboard interface{}) {
+	b.SendMessageWithKeyboard(chatID, "✅ "+text, keyboard)
+}
+
+func (b *Bot) SendError(chatID int64, text string) {
+	b.SendMessage(chatID, "❌ "+text)
 }
