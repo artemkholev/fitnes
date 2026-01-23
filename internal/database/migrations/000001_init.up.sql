@@ -1,21 +1,26 @@
 -- 000001_init.up.sql
--- Начальная схема базы данных
+-- Полная начальная схема базы данных с нужными колонками для бота
 
 -- Организации
 CREATE TABLE IF NOT EXISTS organizations (
     id SERIAL PRIMARY KEY,
     name VARCHAR(255) NOT NULL,
     code VARCHAR(50) UNIQUE NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    is_active BOOLEAN DEFAULT true,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
--- Пользователи (базовая информация)
+-- Пользователи
 CREATE TABLE IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     telegram_id BIGINT UNIQUE NOT NULL,
     username VARCHAR(255),
     full_name VARCHAR(255),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
 -- Менеджеры организаций
@@ -26,6 +31,8 @@ CREATE TABLE IF NOT EXISTS organization_managers (
     telegram_id BIGINT,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
     deactivated_at TIMESTAMP,
     UNIQUE(organization_id, username)
 );
@@ -38,6 +45,8 @@ CREATE TABLE IF NOT EXISTS organization_trainers (
     telegram_id BIGINT,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
     deactivated_at TIMESTAMP,
     UNIQUE(organization_id, username)
 );
@@ -50,6 +59,8 @@ CREATE TABLE IF NOT EXISTS trainer_clients (
     telegram_id BIGINT,
     is_active BOOLEAN DEFAULT true,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
     deactivated_at TIMESTAMP,
     UNIQUE(trainer_id, username)
 );
@@ -62,7 +73,9 @@ CREATE TABLE IF NOT EXISTS workouts (
     date TIMESTAMP NOT NULL,
     notes TEXT,
     muscle_group VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
 -- Упражнения
@@ -72,12 +85,14 @@ CREATE TABLE IF NOT EXISTS exercises (
     name VARCHAR(255) NOT NULL,
     sets INTEGER,
     reps INTEGER,
-    weight DECIMAL(10, 2),
+    weight DECIMAL(10,2),
     rest_seconds INTEGER,
     photo_file_id VARCHAR(255),
     notes TEXT,
     "order" INTEGER,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
 -- Групповые тренировки
@@ -89,7 +104,9 @@ CREATE TABLE IF NOT EXISTS group_trainings (
     description TEXT,
     scheduled_at TIMESTAMP NOT NULL,
     max_participants INTEGER DEFAULT 10,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP
 );
 
 -- Участники групповых тренировок
@@ -98,6 +115,7 @@ CREATE TABLE IF NOT EXISTS group_training_participants (
     group_training_id INTEGER NOT NULL REFERENCES group_trainings(id) ON DELETE CASCADE,
     user_id INTEGER NOT NULL REFERENCES users(id),
     joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    deleted_at TIMESTAMP,
     UNIQUE(group_training_id, user_id)
 );
 
