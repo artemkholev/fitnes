@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fitness-bot/internal/bot"
 	"fitness-bot/internal/charts"
 	"fmt"
@@ -23,13 +22,12 @@ func HandleStats(b *bot.Bot, message *tgbotapi.Message) {
 }
 
 func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	if message.Text == "❌ Отмена" {
 		b.ClearState(message.From.ID)
 		// Определяем клавиатуру на основе доступов
-		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+		accessInfo, _ := b.DB.GetUserAccessInfo( message.From.ID, message.From.UserName)
 		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
@@ -40,7 +38,7 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 	from := time.Now().AddDate(0, -3, 0)
 	to := time.Now()
 
-	exercises, err := b.DB.GetExerciseStats(ctx, telegramID, exerciseName, from, to)
+	exercises, err := b.DB.GetExerciseStats(telegramID, exerciseName, from, to)
 	if err != nil {
 		log.Printf("Error getting exercise stats: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении статистики.")
@@ -86,6 +84,6 @@ func HandleExerciseNameForStats(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	b.ClearState(message.From.ID)
-	accessInfo, _ := b.DB.GetUserAccessInfo(ctx, message.From.ID, message.From.UserName)
+	accessInfo, _ := b.DB.GetUserAccessInfo( message.From.ID, message.From.UserName)
 	b.SendMessageWithKeyboard(message.Chat.ID, statsText, bot.GetStartMenuKeyboard(accessInfo))
 }

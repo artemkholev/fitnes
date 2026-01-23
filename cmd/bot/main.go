@@ -34,7 +34,6 @@ func main() {
 	}
 
 	ctx := context.Background()
-
 	db, err := database.NewDB(ctx)
 	if err != nil {
 		log.Fatalf("Failed to connect to database: %v", err)
@@ -105,7 +104,6 @@ func safeHandleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 
 // handleCallback обрабатывает нажатия на inline-кнопки
 func handleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
-	ctx := context.Background()
 
 	// Отвечаем на callback чтобы убрать "часики"
 	b.AnswerCallback(callback.ID, "")
@@ -115,7 +113,7 @@ func handleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 
 	// Получаем информацию о доступах
 	username := callback.From.UserName
-	accessInfo, err := b.DB.GetUserAccessInfo(ctx, callback.From.ID, username)
+	accessInfo, err := b.DB.GetUserAccessInfo( callback.From.ID, username)
 	if err != nil {
 		log.Printf("Error getting access info in callback: %v", err)
 		return
@@ -186,12 +184,11 @@ func handleOrgCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, a
 
 // handleMuscleCallback обрабатывает выбор группы мышц
 func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action string, chatID int64, messageID int) {
-	ctx := context.Background()
 
 	if action == "cancel" {
 		b.CleanupMessages(chatID, callback.From.ID)
 		b.ClearState(callback.From.ID)
-		accessInfo, _ := b.DB.GetUserAccessInfo(ctx, callback.From.ID, callback.From.UserName)
+		accessInfo, _ := b.DB.GetUserAccessInfo( callback.From.ID, callback.From.UserName)
 		accessInfo.IsAdmin = b.IsAdmin(callback.From.UserName)
 		b.SendMessageWithKeyboard(chatID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
@@ -233,7 +230,7 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 		MuscleGroup:      muscleGroup,
 	}
 
-	if err := b.DB.CreateWorkout(ctx, workout); err != nil {
+	if err := b.DB.CreateWorkout(workout); err != nil {
 		log.Printf("Error creating workout: %v", err)
 		b.EditMessageText(chatID, messageID, "❌ Ошибка при создании тренировки.", nil)
 		return
@@ -329,7 +326,6 @@ func handleClientListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id i
 
 // handleClientActionCallback обрабатывает действия с клиентом
 func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
-	ctx := context.Background()
 	state := b.GetState(callback.From.ID)
 	if state == nil {
 		return
@@ -383,7 +379,7 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 			b.AnswerCallback(callback.ID, "Клиент уже деактивирован")
 			return
 		}
-		if err := b.DB.RemoveClient(ctx, trainerID, client.Client.Username); err != nil {
+		if err := b.DB.RemoveClient( trainerID, client.Client.Username); err != nil {
 			log.Printf("Error removing client: %v", err)
 			b.AnswerCallback(callback.ID, "Ошибка удаления")
 			return
@@ -404,7 +400,6 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 
 // handleManagerListCallback обрабатывает выбор менеджера из списка
 func handleManagerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
-	ctx := context.Background()
 
 	if action == "cancel" {
 		b.CleanupMessages(chatID, callback.From.ID)
@@ -444,7 +439,7 @@ func handleManagerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id 
 	// Находим менеджера по ID
 	for _, manager := range managers {
 		if manager.ID == id {
-			if err := b.DB.RemoveManager(ctx, orgID, manager.Username); err != nil {
+			if err := b.DB.RemoveManager( orgID, manager.Username); err != nil {
 				log.Printf("Error removing manager: %v", err)
 				b.AnswerCallback(callback.ID, "Ошибка удаления")
 				return
@@ -467,7 +462,6 @@ func handleManagerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id 
 
 // handleTrainerListCallback обрабатывает выбор тренера из списка
 func handleTrainerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
-	ctx := context.Background()
 
 	if action == "cancel" {
 		b.CleanupMessages(chatID, callback.From.ID)
@@ -507,7 +501,7 @@ func handleTrainerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id 
 	// Находим тренера по ID
 	for _, trainer := range trainers {
 		if trainer.ID == id {
-			if err := b.DB.RemoveTrainer(ctx, orgID, trainer.Username); err != nil {
+			if err := b.DB.RemoveTrainer( orgID, trainer.Username); err != nil {
 				log.Printf("Error removing trainer: %v", err)
 				b.AnswerCallback(callback.ID, "Ошибка удаления")
 				return
@@ -541,18 +535,17 @@ func handleExerciseCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action
 }
 
 func handleUpdate(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 
 	// Связываем telegram_id с username при каждом сообщении
 	if message.From.UserName != "" {
-		if err := b.DB.LinkTelegramID(ctx, message.From.ID, message.From.UserName); err != nil {
+		if err := b.DB.LinkTelegramID( message.From.ID, message.From.UserName); err != nil {
 			log.Printf("Error linking telegram ID: %v", err)
 		}
 	}
 
 	// Получаем информацию о доступах пользователя
 	username := message.From.UserName
-	accessInfo, err := b.DB.GetUserAccessInfo(ctx, message.From.ID, username)
+	accessInfo, err := b.DB.GetUserAccessInfo( message.From.ID, username)
 	if err != nil {
 		log.Printf("Error getting access info: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при проверке доступов.")
@@ -563,7 +556,7 @@ func handleUpdate(b *bot.Bot, message *tgbotapi.Message) {
 	accessInfo.IsAdmin = b.IsAdmin(username)
 
 	// Обеспечиваем/обновляем запись пользователя
-	b.DB.EnsureUser(ctx, message.From.ID, username, message.From.FirstName+" "+message.From.LastName)
+	b.DB.EnsureUser(message.From.ID, username, message.From.FirstName+" "+message.From.LastName)
 
 	state := b.GetState(message.From.ID)
 

@@ -1,10 +1,11 @@
 package database
 
 import (
-	"context"
 	"fitness-bot/internal/models"
 	"strings"
 	"time"
+
+	"gorm.io/gorm/clause"
 )
 
 // NormalizeUsername убирает @ из начала username
@@ -13,33 +14,33 @@ func NormalizeUsername(username string) string {
 }
 
 // GetUserAccessInfo возвращает полную информацию о доступах пользователя
-func (db *DB) GetUserAccessInfo(ctx context.Context, telegramID int64, username string) (*models.AccessInfo, error) {
+func (db *DB) GetUserAccessInfo(telegramID int64, username string) (*models.AccessInfo, error) {
 	username = NormalizeUsername(username)
 	info := &models.AccessInfo{}
 
 	// Проверяем менеджерские доступы
-	managerOrgs, err := db.GetManagerOrganizations(ctx, telegramID, username)
+	managerOrgs, err := db.GetManagerOrganizations(telegramID, username)
 	if err != nil {
 		return nil, err
 	}
 	info.ManagerOrgs = managerOrgs
 
 	// Проверяем тренерские доступы
-	trainerOrgs, err := db.GetTrainerOrganizations(ctx, telegramID, username)
+	trainerOrgs, err := db.GetTrainerOrganizations(telegramID, username)
 	if err != nil {
 		return nil, err
 	}
 	info.TrainerOrgs = trainerOrgs
 
 	// Проверяем клиентские доступы (активные)
-	clientAccess, err := db.GetClientAccess(ctx, telegramID, username, true)
+	clientAccess, err := db.GetClientAccess(telegramID, username, true)
 	if err != nil {
 		return nil, err
 	}
 	info.ClientAccess = clientAccess
 
 	// Проверяем архивные клиентские доступы
-	archivedAccess, err := db.GetClientAccess(ctx, telegramID, username, false)
+	archivedAccess, err := db.GetClientAccess(telegramID, username, false)
 	if err != nil {
 		return nil, err
 	}
@@ -51,332 +52,251 @@ func (db *DB) GetUserAccessInfo(ctx context.Context, telegramID int64, username 
 // === МЕНЕДЖЕРЫ ===
 
 // AddManager добавляет менеджера в организацию
-func (db *DB) AddManager(ctx context.Context, orgID int64, username string) error {
+func (db *DB) AddManager(orgID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		INSERT INTO organization_managers (organization_id, username, is_active)
-		VALUES ($1, $2, true)
-		ON CONFLICT (organization_id, username)
-		DO UPDATE SET is_active = true, deactivated_at = NULL
-	`
-	_, err := db.Pool.Exec(ctx, query, orgID, username)
-	return err
+	manager := models.OrganizationManager{
+		OrganizationID: orgID,
+		Username:       username,
+		IsActive:       true,
+	}
+	// Upsert: если существует - обновляем is_active и deactivated_at
+	return db.GORM.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "organization_id"}, {Name: "username"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"is_active": true, "deactivated_at": nil}),
+	}).Create(&manager).Error
 }
 
 // RemoveManager деактивирует менеджера
-func (db *DB) RemoveManager(ctx context.Context, orgID int64, username string) error {
+func (db *DB) RemoveManager(orgID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		UPDATE organization_managers
-		SET is_active = false, deactivated_at = $1
-		WHERE organization_id = $2 AND username = $3
-	`
-	_, err := db.Pool.Exec(ctx, query, time.Now(), orgID, username)
-	return err
+	now := time.Now()
+	return db.GORM.Model(&models.OrganizationManager{}).
+		Where("organization_id = ? AND username = ?", orgID, username).
+		Updates(map[string]interface{}{"is_active": false, "deactivated_at": now}).Error
 }
 
 // GetManagerOrganizations возвращает организации где пользователь менеджер
-func (db *DB) GetManagerOrganizations(ctx context.Context, telegramID int64, username string) ([]*models.ManagerOrgInfo, error) {
+func (db *DB) GetManagerOrganizations(telegramID int64, username string) ([]*models.ManagerOrgInfo, error) {
 	username = NormalizeUsername(username)
-	query := `
-		SELECT om.id, om.is_active, o.id, o.name, o.code, o.created_at
-		FROM organization_managers om
-		JOIN organizations o ON om.organization_id = o.id
-		WHERE (om.telegram_id = $1 OR om.username = $2)
-	`
-	rows, err := db.Pool.Query(ctx, query, telegramID, username)
+
+	var managers []models.OrganizationManager
+	err := db.GORM.
+		Preload("Organization").
+		Where("telegram_id = ? OR username = ?", telegramID, username).
+		Find(&managers).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var result []*models.ManagerOrgInfo
-	for rows.Next() {
-		info := &models.ManagerOrgInfo{Organization: &models.Organization{}}
-		if err := rows.Scan(
-			&info.ManagerID, &info.IsActive,
-			&info.Organization.ID, &info.Organization.Name,
-			&info.Organization.Code, &info.Organization.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, info)
+	for _, m := range managers {
+		result = append(result, &models.ManagerOrgInfo{
+			ManagerID:    m.ID,
+			Organization: &m.Organization,
+			IsActive:     m.IsActive,
+		})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetOrganizationManagers возвращает всех менеджеров организации
-func (db *DB) GetOrganizationManagers(ctx context.Context, orgID int64) ([]*models.OrganizationManager, error) {
-	query := `
-		SELECT id, organization_id, username, telegram_id, is_active, created_at, deactivated_at
-		FROM organization_managers
-		WHERE organization_id = $1
-		ORDER BY is_active DESC, created_at
-	`
-	rows, err := db.Pool.Query(ctx, query, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+func (db *DB) GetOrganizationManagers(orgID int64) ([]*models.OrganizationManager, error) {
 	var managers []*models.OrganizationManager
-	for rows.Next() {
-		m := &models.OrganizationManager{}
-		if err := rows.Scan(&m.ID, &m.OrganizationID, &m.Username, &m.TelegramID,
-			&m.IsActive, &m.CreatedAt, &m.DeactivatedAt); err != nil {
-			return nil, err
-		}
-		managers = append(managers, m)
-	}
-	return managers, rows.Err()
+	err := db.GORM.
+		Where("organization_id = ?", orgID).
+		Order("is_active DESC, created_at").
+		Find(&managers).Error
+	return managers, err
 }
 
 // === ТРЕНЕРЫ ===
 
 // AddTrainer добавляет тренера в организацию
-func (db *DB) AddTrainer(ctx context.Context, orgID int64, username string) error {
+func (db *DB) AddTrainer(orgID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		INSERT INTO organization_trainers (organization_id, username, is_active)
-		VALUES ($1, $2, true)
-		ON CONFLICT (organization_id, username)
-		DO UPDATE SET is_active = true, deactivated_at = NULL
-	`
-	_, err := db.Pool.Exec(ctx, query, orgID, username)
-	return err
+	trainer := models.OrganizationTrainer{
+		OrganizationID: orgID,
+		Username:       username,
+		IsActive:       true,
+	}
+	// Upsert: если существует - обновляем is_active и deactivated_at
+	return db.GORM.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "organization_id"}, {Name: "username"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"is_active": true, "deactivated_at": nil}),
+	}).Create(&trainer).Error
 }
 
 // RemoveTrainer деактивирует тренера
-func (db *DB) RemoveTrainer(ctx context.Context, orgID int64, username string) error {
+func (db *DB) RemoveTrainer(orgID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		UPDATE organization_trainers
-		SET is_active = false, deactivated_at = $1
-		WHERE organization_id = $2 AND username = $3
-	`
-	_, err := db.Pool.Exec(ctx, query, time.Now(), orgID, username)
-	return err
+	now := time.Now()
+	return db.GORM.Model(&models.OrganizationTrainer{}).
+		Where("organization_id = ? AND username = ?", orgID, username).
+		Updates(map[string]interface{}{"is_active": false, "deactivated_at": now}).Error
 }
 
 // GetTrainerOrganizations возвращает организации где пользователь тренер
-func (db *DB) GetTrainerOrganizations(ctx context.Context, telegramID int64, username string) ([]*models.TrainerOrgInfo, error) {
+func (db *DB) GetTrainerOrganizations(telegramID int64, username string) ([]*models.TrainerOrgInfo, error) {
 	username = NormalizeUsername(username)
-	query := `
-		SELECT ot.id, ot.is_active, o.id, o.name, o.code, o.created_at
-		FROM organization_trainers ot
-		JOIN organizations o ON ot.organization_id = o.id
-		WHERE (ot.telegram_id = $1 OR ot.username = $2)
-	`
-	rows, err := db.Pool.Query(ctx, query, telegramID, username)
+
+	var trainers []models.OrganizationTrainer
+	err := db.GORM.
+		Preload("Organization").
+		Where("telegram_id = ? OR username = ?", telegramID, username).
+		Find(&trainers).Error
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var result []*models.TrainerOrgInfo
-	for rows.Next() {
-		info := &models.TrainerOrgInfo{Organization: &models.Organization{}}
-		if err := rows.Scan(
-			&info.TrainerID, &info.IsActive,
-			&info.Organization.ID, &info.Organization.Name,
-			&info.Organization.Code, &info.Organization.CreatedAt,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, info)
+	for _, t := range trainers {
+		result = append(result, &models.TrainerOrgInfo{
+			TrainerID:    t.ID,
+			Organization: &t.Organization,
+			IsActive:     t.IsActive,
+		})
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // GetOrganizationTrainers возвращает всех тренеров организации
-func (db *DB) GetOrganizationTrainers(ctx context.Context, orgID int64) ([]*models.OrganizationTrainer, error) {
-	query := `
-		SELECT id, organization_id, username, telegram_id, is_active, created_at, deactivated_at
-		FROM organization_trainers
-		WHERE organization_id = $1
-		ORDER BY is_active DESC, created_at
-	`
-	rows, err := db.Pool.Query(ctx, query, orgID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+func (db *DB) GetOrganizationTrainers(orgID int64) ([]*models.OrganizationTrainer, error) {
 	var trainers []*models.OrganizationTrainer
-	for rows.Next() {
-		t := &models.OrganizationTrainer{}
-		if err := rows.Scan(&t.ID, &t.OrganizationID, &t.Username, &t.TelegramID,
-			&t.IsActive, &t.CreatedAt, &t.DeactivatedAt); err != nil {
-			return nil, err
-		}
-		trainers = append(trainers, t)
-	}
-	return trainers, rows.Err()
+	err := db.GORM.
+		Where("organization_id = ?", orgID).
+		Order("is_active DESC, created_at").
+		Find(&trainers).Error
+	return trainers, err
 }
 
 // GetTrainerByID возвращает тренера по ID
-func (db *DB) GetTrainerByID(ctx context.Context, trainerID int64) (*models.OrganizationTrainer, error) {
-	query := `
-		SELECT id, organization_id, username, telegram_id, is_active, created_at, deactivated_at
-		FROM organization_trainers
-		WHERE id = $1
-	`
-	t := &models.OrganizationTrainer{}
-	err := db.Pool.QueryRow(ctx, query, trainerID).Scan(
-		&t.ID, &t.OrganizationID, &t.Username, &t.TelegramID,
-		&t.IsActive, &t.CreatedAt, &t.DeactivatedAt,
-	)
+func (db *DB) GetTrainerByID(trainerID int64) (*models.OrganizationTrainer, error) {
+	var trainer models.OrganizationTrainer
+	err := db.GORM.First(&trainer, trainerID).Error
 	if err != nil {
 		return nil, err
 	}
-	return t, nil
+	return &trainer, nil
 }
 
 // === КЛИЕНТЫ ===
 
 // AddClient добавляет клиента к тренеру
-func (db *DB) AddClient(ctx context.Context, trainerID int64, username string) error {
+func (db *DB) AddClient(trainerID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		INSERT INTO trainer_clients (trainer_id, username, is_active)
-		VALUES ($1, $2, true)
-		ON CONFLICT (trainer_id, username)
-		DO UPDATE SET is_active = true, deactivated_at = NULL
-	`
-	_, err := db.Pool.Exec(ctx, query, trainerID, username)
-	return err
+	client := models.TrainerClient{
+		TrainerID: trainerID,
+		Username:  username,
+		IsActive:  true,
+	}
+	// Upsert: если существует - обновляем is_active и deactivated_at
+	return db.GORM.Clauses(clause.OnConflict{
+		Columns:   []clause.Column{{Name: "trainer_id"}, {Name: "username"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{"is_active": true, "deactivated_at": nil}),
+	}).Create(&client).Error
 }
 
 // RemoveClient деактивирует клиента
-func (db *DB) RemoveClient(ctx context.Context, trainerID int64, username string) error {
+func (db *DB) RemoveClient(trainerID int64, username string) error {
 	username = NormalizeUsername(username)
-	query := `
-		UPDATE trainer_clients
-		SET is_active = false, deactivated_at = $1
-		WHERE trainer_id = $2 AND username = $3
-	`
-	_, err := db.Pool.Exec(ctx, query, time.Now(), trainerID, username)
-	return err
+	now := time.Now()
+	return db.GORM.Model(&models.TrainerClient{}).
+		Where("trainer_id = ? AND username = ?", trainerID, username).
+		Updates(map[string]interface{}{"is_active": false, "deactivated_at": now}).Error
 }
 
 // GetClientAccess возвращает доступы клиента к тренерам
-func (db *DB) GetClientAccess(ctx context.Context, telegramID int64, username string, activeOnly bool) ([]*models.ClientAccessInfo, error) {
+func (db *DB) GetClientAccess(telegramID int64, username string, activeOnly bool) ([]*models.ClientAccessInfo, error) {
 	username = NormalizeUsername(username)
-	query := `
-		SELECT tc.id, o.id, o.name, ot.id, ot.username, tc.is_active
-		FROM trainer_clients tc
-		JOIN organization_trainers ot ON tc.trainer_id = ot.id
-		JOIN organizations o ON ot.organization_id = o.id
-		WHERE (tc.telegram_id = $1 OR tc.username = $2)
-	`
-	if activeOnly {
-		query += " AND tc.is_active = true AND ot.is_active = true"
-	} else {
-		query += " AND tc.is_active = false"
-	}
 
-	rows, err := db.Pool.Query(ctx, query, telegramID, username)
-	if err != nil {
-		return nil, err
+	query := db.GORM.Table("trainer_clients tc").
+		Select("tc.id as trainer_client_id, o.id as organization_id, o.name as organization_name, ot.id as trainer_id, ot.username as trainer_username, tc.is_active").
+		Joins("JOIN organization_trainers ot ON tc.trainer_id = ot.id").
+		Joins("JOIN organizations o ON ot.organization_id = o.id").
+		Where("tc.telegram_id = ? OR tc.username = ?", telegramID, username)
+
+	if activeOnly {
+		query = query.Where("tc.is_active = ? AND ot.is_active = ?", true, true)
+	} else {
+		query = query.Where("tc.is_active = ?", false)
 	}
-	defer rows.Close()
 
 	var result []*models.ClientAccessInfo
-	for rows.Next() {
-		info := &models.ClientAccessInfo{}
-		if err := rows.Scan(
-			&info.TrainerClientID, &info.OrganizationID, &info.OrganizationName,
-			&info.TrainerID, &info.TrainerUsername, &info.IsActive,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, info)
-	}
-	return result, rows.Err()
+	err := query.Scan(&result).Error
+	return result, err
 }
 
 // GetTrainerClients возвращает всех клиентов тренера
-func (db *DB) GetTrainerClients(ctx context.Context, trainerID int64) ([]*models.ClientWithInfo, error) {
-	query := `
-		SELECT tc.id, tc.trainer_id, tc.username, tc.telegram_id, tc.is_active,
-		       tc.created_at, tc.deactivated_at,
-		       COALESCE(u.full_name, ''),
-		       COUNT(w.id) as workout_count,
-		       MAX(w.date) as last_workout
-		FROM trainer_clients tc
-		LEFT JOIN users u ON tc.telegram_id = u.telegram_id
-		LEFT JOIN workouts w ON w.trainer_client_id = tc.id
-		WHERE tc.trainer_id = $1
-		GROUP BY tc.id, tc.trainer_id, tc.username, tc.telegram_id, tc.is_active,
-		         tc.created_at, tc.deactivated_at, u.full_name
-		ORDER BY tc.is_active DESC, tc.created_at DESC
-	`
-	rows, err := db.Pool.Query(ctx, query, trainerID)
+func (db *DB) GetTrainerClients(trainerID int64) ([]*models.ClientWithInfo, error) {
+	type ClientQueryResult struct {
+		models.TrainerClient
+		FullName     string
+		WorkoutCount int
+		LastWorkout  *time.Time
+	}
+
+	var results []ClientQueryResult
+	err := db.GORM.Table("trainer_clients tc").
+		Select("tc.*, COALESCE(u.full_name, '') as full_name, COUNT(w.id) as workout_count, MAX(w.date) as last_workout").
+		Joins("LEFT JOIN users u ON tc.telegram_id = u.telegram_id").
+		Joins("LEFT JOIN workouts w ON w.trainer_client_id = tc.id").
+		Where("tc.trainer_id = ?", trainerID).
+		Group("tc.id, tc.trainer_id, tc.username, tc.telegram_id, tc.is_active, tc.created_at, tc.deactivated_at, u.full_name").
+		Order("tc.is_active DESC, tc.created_at DESC").
+		Scan(&results).Error
+
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	var result []*models.ClientWithInfo
-	for rows.Next() {
-		info := &models.ClientWithInfo{Client: &models.TrainerClient{}}
-		if err := rows.Scan(
-			&info.Client.ID, &info.Client.TrainerID, &info.Client.Username,
-			&info.Client.TelegramID, &info.Client.IsActive,
-			&info.Client.CreatedAt, &info.Client.DeactivatedAt,
-			&info.FullName, &info.WorkoutCount, &info.LastWorkout,
-		); err != nil {
-			return nil, err
-		}
-		result = append(result, info)
+	var clientsInfo []*models.ClientWithInfo
+	for _, r := range results {
+		clientsInfo = append(clientsInfo, &models.ClientWithInfo{
+			Client:       &r.TrainerClient,
+			FullName:     r.FullName,
+			WorkoutCount: r.WorkoutCount,
+			LastWorkout:  r.LastWorkout,
+		})
 	}
-	return result, rows.Err()
+	return clientsInfo, nil
 }
 
 // GetTrainerClientByID возвращает связь тренер-клиент по ID
-func (db *DB) GetTrainerClientByID(ctx context.Context, id int64) (*models.TrainerClient, error) {
-	query := `
-		SELECT id, trainer_id, username, telegram_id, is_active, created_at, deactivated_at
-		FROM trainer_clients
-		WHERE id = $1
-	`
-	tc := &models.TrainerClient{}
-	err := db.Pool.QueryRow(ctx, query, id).Scan(
-		&tc.ID, &tc.TrainerID, &tc.Username, &tc.TelegramID,
-		&tc.IsActive, &tc.CreatedAt, &tc.DeactivatedAt,
-	)
+func (db *DB) GetTrainerClientByID(id int64) (*models.TrainerClient, error) {
+	var client models.TrainerClient
+	err := db.GORM.First(&client, id).Error
 	if err != nil {
 		return nil, err
 	}
-	return tc, nil
+	return &client, nil
 }
 
 // === СВЯЗЫВАНИЕ TELEGRAM ID ===
 
 // LinkTelegramID связывает telegram_id с username во всех таблицах доступов
-func (db *DB) LinkTelegramID(ctx context.Context, telegramID int64, username string) error {
+func (db *DB) LinkTelegramID(telegramID int64, username string) error {
 	username = NormalizeUsername(username)
 
 	// Обновляем менеджеров
-	_, err := db.Pool.Exec(ctx,
-		"UPDATE organization_managers SET telegram_id = $1 WHERE username = $2 AND telegram_id IS NULL",
-		telegramID, username)
+	err := db.GORM.Model(&models.OrganizationManager{}).
+		Where("username = ? AND telegram_id IS NULL", username).
+		Update("telegram_id", telegramID).Error
 	if err != nil {
 		return err
 	}
 
 	// Обновляем тренеров
-	_, err = db.Pool.Exec(ctx,
-		"UPDATE organization_trainers SET telegram_id = $1 WHERE username = $2 AND telegram_id IS NULL",
-		telegramID, username)
+	err = db.GORM.Model(&models.OrganizationTrainer{}).
+		Where("username = ? AND telegram_id IS NULL", username).
+		Update("telegram_id", telegramID).Error
 	if err != nil {
 		return err
 	}
 
 	// Обновляем клиентов
-	_, err = db.Pool.Exec(ctx,
-		"UPDATE trainer_clients SET telegram_id = $1 WHERE username = $2 AND telegram_id IS NULL",
-		telegramID, username)
+	err = db.GORM.Model(&models.TrainerClient{}).
+		Where("username = ? AND telegram_id IS NULL", username).
+		Update("telegram_id", telegramID).Error
 
 	return err
 }

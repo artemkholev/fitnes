@@ -168,3 +168,11 @@ func (b *Bot) CleanupMessages(chatID int64, telegramID int64) {
 	}
 	b.mu.Unlock()
 }
+
+// GetBreadcrumbs возвращает breadcrumbs навигации
+func GetBreadcrumbs(path ...string) string {
+	if len(path) == 0 {
+		return ""
+	}
+	return strings.Join(path, " > ") + "\n\n"
+}

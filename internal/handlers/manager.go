@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fitness-bot/internal/bot"
 	"fitness-bot/internal/database"
 	"fitness-bot/internal/models"
@@ -54,13 +53,20 @@ func HandleManagerMenu(b *bot.Bot, message *tgbotapi.Message, managerOrgs []*mod
 }
 
 func showManagerOrgMenu(b *bot.Bot, message *tgbotapi.Message, orgID int64, orgName string) {
+	// Очищаем старые сообщения
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+
 	b.SetState(message.From.ID, "manager_managing_org", map[string]interface{}{
 		"org_id":   orgID,
 		"org_name": orgName,
 	})
+
+	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "🏢 Менеджер", orgName)
+	text := breadcrumbs + "Как менеджер вы можете добавлять и удалять тренеров."
+
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		fmt.Sprintf("🏢 *Управление организацией %s*\n\nКак менеджер вы можете добавлять и удалять тренеров.", orgName),
+		text,
 		bot.GetManagerMenuKeyboard(),
 	)
 }
@@ -108,7 +114,6 @@ func HandleAddTrainer(b *bot.Bot, message *tgbotapi.Message) {
 
 // HandleAddTrainerUsername обрабатывает ввод username тренера
 func HandleAddTrainerUsername(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	// Безопасное извлечение данных
@@ -131,7 +136,7 @@ func HandleAddTrainerUsername(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	if err := b.DB.AddTrainer(ctx, orgID, username); err != nil {
+	if err := b.DB.AddTrainer( orgID, username); err != nil {
 		log.Printf("Error adding trainer: %v", err)
 		errStr := err.Error()
 		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
@@ -165,9 +170,8 @@ func HandleListTrainers(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	ctx := context.Background()
 
-	trainers, err := b.DB.GetOrganizationTrainers(ctx, orgID)
+	trainers, err := b.DB.GetOrganizationTrainers( orgID)
 	if err != nil {
 		log.Printf("Error getting trainers: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении списка тренеров.")
@@ -208,7 +212,6 @@ func HandleListTrainers(b *bot.Bot, message *tgbotapi.Message) {
 
 // HandleRemoveTrainer удаляет тренера
 func HandleRemoveTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 	if state == nil {
 		b.SendMessage(message.Chat.ID, "❌ Сначала выберите организацию.")
@@ -229,7 +232,7 @@ func HandleRemoveTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	}
 
 	trainer := trainers[idx-1]
-	if err := b.DB.RemoveTrainer(ctx, orgID, trainer.Username); err != nil {
+	if err := b.DB.RemoveTrainer( orgID, trainer.Username); err != nil {
 		log.Printf("Error removing trainer: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при удалении тренера.")
 		return

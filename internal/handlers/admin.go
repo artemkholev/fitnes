@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fmt"
 	"log"
 	"strings"
@@ -20,9 +19,15 @@ func HandleAdminMenu(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
+	// Очищаем старые сообщения
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+
+	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "⚙️ Админ")
+	text := breadcrumbs + "Выберите действие:"
+
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		"*Панель администратора*\n\nВыберите действие:",
+		text,
 		bot.GetAdminMenuKeyboard(),
 	)
 }
@@ -60,7 +65,6 @@ func HandleCreateOrganizationName(b *bot.Bot, message *tgbotapi.Message) {
 
 // HandleCreateOrganizationCode — ввод кода
 func HandleCreateOrganizationCode(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	if message.Text == "❌ Отмена" {
@@ -89,7 +93,7 @@ func HandleCreateOrganizationCode(b *bot.Bot, message *tgbotapi.Message) {
 		Code: orgCode,
 	}
 
-	if err := b.DB.CreateOrganization(ctx, org); err != nil {
+	if err := b.DB.CreateOrganization(org); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "duplicate") || strings.Contains(err.Error(), "unique") {
 			b.SendWithCancel(message.Chat.ID, "Организация с таким кодом уже существует. Введите другой код:")
 			return
@@ -112,8 +116,7 @@ func HandleListOrganizations(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	ctx := context.Background()
-	orgs, err := b.DB.GetAllOrganizations(ctx)
+	orgs, err := b.DB.GetAllOrganizations()
 	if err != nil {
 		log.Printf("Error getting organizations: %v", err)
 		b.SendError(message.Chat.ID, "Ошибка при получении списка организаций.")
@@ -150,14 +153,21 @@ func HandleSelectOrganization(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	}
 
 	org := orgs[idx-1]
+
+	// Очищаем старые сообщения
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+
 	b.SetState(message.From.ID, "admin_managing_org", map[string]interface{}{
 		"org_id":   org.ID,
 		"org_name": org.Name,
 	})
 
+	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "⚙️ Админ", "🏢 "+org.Name)
+	text := breadcrumbs + "Выберите действие:"
+
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		fmt.Sprintf("Управление организацией *%s*\n\nВыберите действие:", bot.EscapeMarkdown(org.Name)),
+		text,
 		bot.GetOrgManageKeyboard(),
 	)
 }
@@ -185,7 +195,6 @@ func HandleAddManager(b *bot.Bot, message *tgbotapi.Message) {
 
 // HandleAddManagerUsername — обработка ввода username
 func HandleAddManagerUsername(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	// Безопасное извлечение данных
@@ -214,7 +223,7 @@ func HandleAddManagerUsername(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	if err := b.DB.AddManager(ctx, orgID, username); err != nil {
+	if err := b.DB.AddManager( orgID, username); err != nil {
 		log.Printf("Error adding manager @%s (admin: %s): %v", username, message.From.UserName, err)
 
 		// Более понятные ошибки
@@ -254,9 +263,8 @@ func HandleListManagers(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	ctx := context.Background()
 
-	managers, err := b.DB.GetOrganizationManagers(ctx, orgID)
+	managers, err := b.DB.GetOrganizationManagers( orgID)
 	if err != nil {
 		log.Printf("Error getting managers (org %d): %v", orgID, err)
 		b.SendError(message.Chat.ID, "Ошибка при получении списка менеджеров.")
@@ -315,8 +323,7 @@ func HandleRemoveManager(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	}
 	manager := managers[idx-1]
 
-	ctx := context.Background()
-	if err := b.DB.RemoveManager(ctx, orgID, manager.Username); err != nil {
+	if err := b.DB.RemoveManager( orgID, manager.Username); err != nil {
 		log.Printf("Error removing manager @%s: %v", manager.Username, err)
 		b.SendError(message.Chat.ID, "Ошибка при удалении менеджера.")
 		return

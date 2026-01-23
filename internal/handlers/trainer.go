@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"context"
 	"fitness-bot/internal/bot"
 	"fitness-bot/internal/database"
 	"fitness-bot/internal/models"
@@ -54,14 +53,21 @@ func HandleTrainerMenu(b *bot.Bot, message *tgbotapi.Message, trainerOrgs []*mod
 }
 
 func showTrainerOrgMenu(b *bot.Bot, message *tgbotapi.Message, trainerID, orgID int64, orgName string) {
+	// Очищаем старые сообщения
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+
 	b.SetState(message.From.ID, "trainer_managing_org", map[string]interface{}{
 		"trainer_id": trainerID,
 		"org_id":     orgID,
 		"org_name":   orgName,
 	})
+
+	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "🏋️ Тренер", orgName)
+	text := breadcrumbs + "Выберите действие:"
+
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		fmt.Sprintf("🏋️ *Панель тренера - %s*\n\nВыберите действие:", orgName),
+		text,
 		bot.GetTrainerMenuKeyboard(),
 	)
 }
@@ -110,7 +116,6 @@ func HandleAddClient(b *bot.Bot, message *tgbotapi.Message) {
 
 // HandleAddClientUsername обрабатывает ввод username клиента
 func HandleAddClientUsername(b *bot.Bot, message *tgbotapi.Message) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 
 	// Безопасное извлечение данных
@@ -134,7 +139,7 @@ func HandleAddClientUsername(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	if err := b.DB.AddClient(ctx, trainerID, username); err != nil {
+	if err := b.DB.AddClient( trainerID, username); err != nil {
 		log.Printf("Error adding client: %v", err)
 		errStr := err.Error()
 		if strings.Contains(errStr, "duplicate") || strings.Contains(errStr, "unique") {
@@ -168,9 +173,8 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	ctx := context.Background()
 
-	clients, err := b.DB.GetTrainerClients(ctx, trainerID)
+	clients, err := b.DB.GetTrainerClients( trainerID)
 	if err != nil {
 		log.Printf("Error getting clients: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении списка клиентов.")
@@ -237,13 +241,20 @@ func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 
 	client := clients[idx-1]
 
+	// Очищаем старые сообщения
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+
 	var sb strings.Builder
 	name := client.Client.Username
 	if client.FullName != "" {
 		name = client.FullName
 	}
 
-	sb.WriteString(fmt.Sprintf("👤 *Клиент: %s*\n", name))
+	// Breadcrumbs
+	orgName, _ := bot.GetStateString(state.Data, "org_name")
+	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "🏋️ Тренер", orgName, "👥 Клиенты", name)
+	sb.WriteString(breadcrumbs)
+
 	sb.WriteString(fmt.Sprintf("Username: @%s\n", client.Client.Username))
 	sb.WriteString(fmt.Sprintf("Тренировок: %d\n", client.WorkoutCount))
 	if client.LastWorkout != nil {
@@ -275,7 +286,6 @@ func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 
 // HandleRemoveClientByIndex удаляет клиента по индексу из списка
 func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 	if state == nil {
 		b.SendMessage(message.Chat.ID, "❌ Список клиентов устарел.")
@@ -297,7 +307,7 @@ func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	}
 
 	client := clients[idx-1]
-	if err := b.DB.RemoveClient(ctx, trainerID, client.Client.Username); err != nil {
+	if err := b.DB.RemoveClient( trainerID, client.Client.Username); err != nil {
 		log.Printf("Error removing client: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при удалении клиента.")
 		return
@@ -313,7 +323,6 @@ func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
 
 // HandleClientAction обрабатывает действие с клиентом
 func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
-	ctx := context.Background()
 	state := b.GetState(message.From.ID)
 	if state == nil {
 		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния. Попробуйте снова.")
@@ -362,7 +371,7 @@ func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
 			b.SendMessage(message.Chat.ID, "❌ Клиент уже деактивирован.")
 			return
 		}
-		if err := b.DB.RemoveClient(ctx, trainerID, client.Client.Username); err != nil {
+		if err := b.DB.RemoveClient( trainerID, client.Client.Username); err != nil {
 			log.Printf("Error removing client: %v", err)
 			b.SendMessage(message.Chat.ID, "❌ Ошибка при удалении клиента.")
 			return

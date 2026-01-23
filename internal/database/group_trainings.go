@@ -1,85 +1,50 @@
 package database
 
 import (
-	"context"
 	"fitness-bot/internal/models"
 	"time"
 )
 
-func (db *DB) CreateGroupTraining(ctx context.Context, gt *models.GroupTraining) error {
-	query := `
-		INSERT INTO group_trainings (organization_id, trainer_id, name, description, scheduled_at, max_participants)
-		VALUES ($1, $2, $3, $4, $5, $6)
-		RETURNING id, created_at
-	`
-	return db.Pool.QueryRow(ctx, query,
-		gt.OrganizationID,
-		gt.TrainerID,
-		gt.Name,
-		gt.Description,
-		gt.ScheduledAt,
-		gt.MaxParticipants,
-	).Scan(&gt.ID, &gt.CreatedAt)
+// CreateGroupTraining создаёт новую групповую тренировку
+func (db *DB) CreateGroupTraining(gt *models.GroupTraining) error {
+	return db.GORM.Create(gt).Error
 }
 
-func (db *DB) GetUpcomingGroupTrainings(ctx context.Context, orgID int64) ([]*models.GroupTraining, error) {
-	query := `
-		SELECT id, organization_id, trainer_id, name, description, scheduled_at, max_participants, created_at
-		FROM group_trainings
-		WHERE organization_id = $1 AND scheduled_at > $2
-		ORDER BY scheduled_at ASC
-	`
-	rows, err := db.Pool.Query(ctx, query, orgID, time.Now())
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+// GetUpcomingGroupTrainings возвращает предстоящие тренировки организации
+func (db *DB) GetUpcomingGroupTrainings(orgID int64) ([]*models.GroupTraining, error) {
 	var trainings []*models.GroupTraining
-	for rows.Next() {
-		gt := &models.GroupTraining{}
-		if err := rows.Scan(&gt.ID, &gt.OrganizationID, &gt.TrainerID, &gt.Name,
-			&gt.Description, &gt.ScheduledAt, &gt.MaxParticipants, &gt.CreatedAt); err != nil {
-			return nil, err
-		}
-		trainings = append(trainings, gt)
-	}
-	return trainings, rows.Err()
+	err := db.GORM.
+		Where("organization_id = ? AND scheduled_at > ?", orgID, time.Now()).
+		Order("scheduled_at ASC").
+		Find(&trainings).Error
+	return trainings, err
 }
 
-func (db *DB) JoinGroupTraining(ctx context.Context, trainingID, userID int64) error {
-	query := `INSERT INTO group_training_participants (group_training_id, user_id) VALUES ($1, $2)`
-	_, err := db.Pool.Exec(ctx, query, trainingID, userID)
-	return err
+// JoinGroupTraining добавляет участника к групповой тренировке
+func (db *DB) JoinGroupTraining(trainingID, userID int64) error {
+	participant := &models.GroupTrainingParticipant{
+		GroupTrainingID: trainingID,
+		UserID:          userID,
+	}
+	return db.GORM.Create(participant).Error
 }
 
-func (db *DB) GetGroupTrainingParticipants(ctx context.Context, trainingID int64) ([]*models.User, error) {
-	query := `
-		SELECT u.id, u.telegram_id, u.username, u.full_name, u.created_at
-		FROM users u
-		JOIN group_training_participants gtp ON u.id = gtp.user_id
-		WHERE gtp.group_training_id = $1
-	`
-	rows, err := db.Pool.Query(ctx, query, trainingID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
+// GetGroupTrainingParticipants возвращает список участников тренировки
+func (db *DB) GetGroupTrainingParticipants(trainingID int64) ([]*models.User, error) {
 	var users []*models.User
-	for rows.Next() {
-		u := &models.User{}
-		if err := rows.Scan(&u.ID, &u.TelegramID, &u.Username, &u.FullName, &u.CreatedAt); err != nil {
-			return nil, err
-		}
-		users = append(users, u)
-	}
-	return users, rows.Err()
+	err := db.GORM.
+		Joins("JOIN group_training_participants ON users.id = group_training_participants.user_id").
+		Where("group_training_participants.group_training_id = ?", trainingID).
+		Find(&users).Error
+	return users, err
 }
 
-func (db *DB) GetParticipantCount(ctx context.Context, trainingID int64) (int, error) {
-	var count int
-	query := `SELECT COUNT(*) FROM group_training_participants WHERE group_training_id = $1`
-	err := db.Pool.QueryRow(ctx, query, trainingID).Scan(&count)
-	return count, err
+// GetParticipantCount возвращает количество участников тренировки
+func (db *DB) GetParticipantCount(trainingID int64) (int, error) {
+	var count int64
+	err := db.GORM.
+		Model(&models.GroupTrainingParticipant{}).
+		Where("group_training_id = ?", trainingID).
+		Count(&count).Error
+	return int(count), err
 }
