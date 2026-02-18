@@ -417,7 +417,7 @@ func showClientCard(b *bot.Bot, userID, chatID int64, client *models.ClientWithI
 		name = client.FullName
 	}
 	sb.WriteString("👤 *" + bot.EscapeMarkdown(name) + "*\n")
-	sb.WriteString("@" + client.Client.Username + "\n")
+	sb.WriteString("@" + bot.EscapeMarkdown(client.Client.Username) + "\n")
 	sb.WriteString("Тренировок: " + strconv.Itoa(client.WorkoutCount) + "\n")
 	if client.LastWorkout != nil {
 		sb.WriteString("Последняя: " + client.LastWorkout.Format("02.01.2006") + "\n")
@@ -473,7 +473,7 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 
 	switch action {
 	case "stats":
-		b.EditMessageText(chatID, messageID, "📊 Статистика клиента @"+client.Client.Username+" будет добавлена позже.", nil)
+		b.EditMessageText(chatID, messageID, "📊 Статистика клиента @"+bot.EscapeMarkdown(client.Client.Username)+" будет добавлена позже.", nil)
 
 	case "workout":
 		b.CleanupMessages(chatID, callback.From.ID)
@@ -486,11 +486,11 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 			"client_telegram_id": client.Client.TelegramID, // *int64, nil если клиент не запускал бота
 		})
 		keyboard := bot.GetInlineMuscleGroupKeyboard()
-		msgID := b.SendInlineKeyboard(chatID, "➕ *Создание тренировки для @"+client.Client.Username+"*\n\nВыберите группу мышц:", keyboard)
+		msgID := b.SendInlineKeyboard(chatID, "➕ *Создание тренировки для @"+bot.EscapeMarkdown(client.Client.Username)+"*\n\nВыберите группу мышц:", keyboard)
 		b.StoreMessageID(callback.From.ID, msgID)
 
 	case "history":
-		b.EditMessageText(chatID, messageID, "📋 История тренировок @"+client.Client.Username+" будет добавлена позже.", nil)
+		b.EditMessageText(chatID, messageID, "📋 История тренировок @"+bot.EscapeMarkdown(client.Client.Username)+" будет добавлена позже.", nil)
 
 	case "delete":
 		if !client.Client.IsActive {
@@ -510,7 +510,7 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 		})
 		b.SendMessageWithKeyboard(
 			chatID,
-			"✅ Клиент @"+client.Client.Username+" удалён.",
+			"✅ Клиент @"+bot.EscapeMarkdown(client.Client.Username)+" удалён.",
 			bot.GetTrainerMenuKeyboard(),
 		)
 	}

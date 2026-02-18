@@ -214,15 +214,15 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 
 	sb.WriteString("Выберите клиента для просмотра:")
 
-	keyboard := bot.GetInlineListKeyboard(items, ids, "client")
-	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
-
 	b.SetState(message.From.ID, "trainer_viewing_clients", map[string]interface{}{
 		"trainer_id": state.Data["trainer_id"],
 		"org_id":     state.Data["org_id"],
 		"org_name":   state.Data["org_name"],
 		"clients":    clients,
 	})
+
+	keyboard := bot.GetInlineListKeyboard(items, ids, "client")
+	b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
 }
 
 // HandleSelectClient выбор клиента для просмотра (текстовый путь — ввод номера)
