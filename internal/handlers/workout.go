@@ -22,15 +22,46 @@ func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
 		}
 	}
 
-	b.SendMessageWithKeyboard(
+	keyboard := bot.GetInlineDateKeyboard()
+	msgID := b.SendInlineKeyboard(
 		message.Chat.ID,
-		"🏋️ *Новая тренировка*\n\nВыберите группу мышц:",
-		bot.GetMuscleGroupKeyboard(),
+		"🏋️ *Новая тренировка*\n\nВыберите дату тренировки:",
+		keyboard,
 	)
-	b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
+	b.SetState(message.From.ID, "awaiting_workout_date", map[string]interface{}{
 		"telegram_id":       message.From.ID,
 		"trainer_client_id": trainerClientID,
 	})
+	b.StoreMessageID(message.From.ID, msgID)
+}
+
+// HandleWorkoutDateCustom обрабатывает ручной ввод даты тренировки в формате ДД.ММ.ГГГГ.
+func HandleWorkoutDateCustom(b *bot.Bot, message *tgbotapi.Message) {
+	state := b.GetState(message.From.ID)
+	if state == nil {
+		return
+	}
+
+	text := strings.TrimSpace(message.Text)
+	date, err := time.Parse("02.01.2006", text)
+	if err != nil {
+		b.SendMessage(message.Chat.ID, "⚠️ Неверный формат даты. Введите в формате ДД.ММ.ГГГГ\n(например: 15.01.2025):")
+		return
+	}
+
+	state.Data["workout_date"] = date
+	state.Data["step"] = ""
+
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
+	b.SetState(message.From.ID, "awaiting_muscle_group", state.Data)
+
+	keyboard := bot.GetInlineMuscleGroupKeyboard()
+	msgID := b.SendInlineKeyboard(
+		message.Chat.ID,
+		fmt.Sprintf("📅 Дата: *%s*\n\nВыберите группу мышц:", date.Format("02.01.2006")),
+		keyboard,
+	)
+	b.StoreMessageID(message.From.ID, msgID)
 }
 
 func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
@@ -71,10 +102,17 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 		}
 	}
 
+	workoutDate := time.Now()
+	if state != nil && state.Data != nil {
+		if d, ok := state.Data["workout_date"].(time.Time); ok {
+			workoutDate = d
+		}
+	}
+
 	workout := &models.Workout{
 		TrainerClientID:  trainerClientID,
 		ClientTelegramID: message.From.ID,
-		Date:             time.Now(),
+		Date:             workoutDate,
 		MuscleGroup:      muscleGroup,
 	}
 
@@ -249,8 +287,12 @@ func SaveExerciseStep(b *bot.Bot, userID, chatID int64, editMsgID int, weight fl
 	delete(state.Data, "exercise_sets")
 	delete(state.Data, "exercise_reps")
 
-	text := fmt.Sprintf("✅ *%s* — %d×%d (%.1f кг)\n\nДобавить ещё упражнение?",
-		bot.EscapeMarkdown(name), int(setsVal), int(repsVal), weight)
+	weightStr := fmt.Sprintf("%.1f кг", weight)
+	if weight == 0 {
+		weightStr = "без веса"
+	}
+	text := fmt.Sprintf("✅ *%s* — %d×%d (%s)\n\nДобавить ещё упражнение?",
+		bot.EscapeMarkdown(name), int(setsVal), int(repsVal), weightStr)
 	keyboard := bot.GetInlineFinishKeyboard()
 
 	if editMsg && editMsgID > 0 {
@@ -261,8 +303,9 @@ func SaveExerciseStep(b *bot.Bot, userID, chatID int64, editMsgID int, weight fl
 	}
 }
 
+// HandleMyWorkouts показывает список тренировок клиента в виде inline-кнопок.
 func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
-	workouts, err := b.DB.GetWorkoutsByClientTelegramID(message.From.ID, 10)
+	workouts, err := b.DB.GetWorkoutsByClientTelegramID(message.From.ID, 20)
 	if err != nil {
 		log.Printf("Error getting workouts: %v", err)
 		b.SendMessage(message.Chat.ID, "❌ Ошибка при получении тренировок.")
@@ -274,21 +317,37 @@ func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
 		return
 	}
 
-	var response strings.Builder
-	response.WriteString("📝 *Ваши последние тренировки:*\n\n")
-
+	exerciseCounts := make(map[int64]int)
 	for _, w := range workouts {
 		exercises, _ := b.DB.GetExercisesByWorkout(w.ID)
-		response.WriteString(fmt.Sprintf("📅 %s — %s\n", w.Date.Format("02.01.2006"), w.MuscleGroup))
-
-		if len(exercises) > 0 {
-			for _, ex := range exercises {
-				response.WriteString(fmt.Sprintf("  • %s: %d×%d (%.1f кг)\n",
-					ex.Name, ex.Sets, ex.Reps, ex.Weight))
-			}
-		}
-		response.WriteString("\n")
+		exerciseCounts[w.ID] = len(exercises)
 	}
 
-	b.SendMessage(message.Chat.ID, response.String())
+	b.SetState(message.From.ID, "viewing_workouts", map[string]interface{}{
+		"workouts":        workouts,
+		"exercise_counts": exerciseCounts,
+		"can_delete":      true,
+	})
+
+	keyboard := bot.GetInlineWorkoutsKeyboard(workouts, exerciseCounts)
+	b.SendInlineKeyboard(message.Chat.ID, "📝 *Ваши тренировки:*", keyboard)
+}
+
+// FormatWorkoutDetail форматирует детальное описание тренировки с упражнениями.
+func FormatWorkoutDetail(w *models.Workout, exercises []*models.Exercise) string {
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf("📅 *%s — %s*\n\n", w.Date.Format("02.01.2006"), string(w.MuscleGroup)))
+	if len(exercises) == 0 {
+		sb.WriteString("Упражнения не добавлены.")
+	} else {
+		for i, ex := range exercises {
+			weightStr := fmt.Sprintf("%.1f кг", ex.Weight)
+			if ex.Weight == 0 {
+				weightStr = "без веса"
+			}
+			sb.WriteString(fmt.Sprintf("%d. *%s*: %d×%d (%s)\n",
+				i+1, bot.EscapeMarkdown(ex.Name), ex.Sets, ex.Reps, weightStr))
+		}
+	}
+	return sb.String()
 }

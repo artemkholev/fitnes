@@ -78,3 +78,11 @@ func (db *DB) GetWorkoutByID(id int64) (*models.Workout, error) {
 	}
 	return &workout, nil
 }
+
+// DeleteWorkout удаляет тренировку и все её упражнения (soft delete)
+func (db *DB) DeleteWorkout(id int64) error {
+	if err := db.GORM.Where("workout_id = ?", id).Delete(&models.Exercise{}).Error; err != nil {
+		return err
+	}
+	return db.GORM.Delete(&models.Workout{}, id).Error
+}

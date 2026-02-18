@@ -347,6 +347,9 @@ func GetInlineRepsKeyboard() tgbotapi.InlineKeyboardMarkup {
 func GetInlineWeightKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🏃 Без веса", "ex_weight:bodyweight"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("10", "ex_weight:10"),
 			tgbotapi.NewInlineKeyboardButtonData("15", "ex_weight:15"),
 			tgbotapi.NewInlineKeyboardButtonData("20", "ex_weight:20"),
@@ -366,6 +369,59 @@ func GetInlineWeightKeyboard() tgbotapi.InlineKeyboardMarkup {
 		),
 		tgbotapi.NewInlineKeyboardRow(
 			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "ex_weight:cancel"),
+		),
+	)
+}
+
+// GetInlineDateKeyboard для выбора даты тренировки.
+func GetInlineDateKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("📅 Сегодня", "date:today"),
+			tgbotapi.NewInlineKeyboardButtonData("📅 Другая дата", "date:other"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "date:cancel"),
+		),
+	)
+}
+
+// GetInlineWorkoutsKeyboard строит список тренировок для выбора.
+func GetInlineWorkoutsKeyboard(workouts []*models.Workout, exerciseCounts map[int64]int) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	for _, w := range workouts {
+		count := exerciseCounts[w.ID]
+		label := w.Date.Format("02.01.2006") + " — " + string(w.MuscleGroup) + " (" + strconv.Itoa(count) + " упр.)"
+		btn := tgbotapi.NewInlineKeyboardButtonData(label, "workout:"+strconv.FormatInt(w.ID, 10)+":detail")
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("❌ Закрыть", "workout:close"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// GetInlineWorkoutActionsKeyboard показывает действия с конкретной тренировкой.
+func GetInlineWorkoutActionsKeyboard(workoutID int64, canDelete bool) tgbotapi.InlineKeyboardMarkup {
+	var rows [][]tgbotapi.InlineKeyboardButton
+	if canDelete {
+		rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("🗑 Удалить тренировку", "workout:"+strconv.FormatInt(workoutID, 10)+":delete_ask"),
+		))
+	}
+	rows = append(rows, tgbotapi.NewInlineKeyboardRow(
+		tgbotapi.NewInlineKeyboardButtonData("🔙 Назад к списку", "workout:back"),
+	))
+	return tgbotapi.NewInlineKeyboardMarkup(rows...)
+}
+
+// GetInlineWorkoutDeleteConfirmKeyboard запрашивает подтверждение удаления.
+func GetInlineWorkoutDeleteConfirmKeyboard(workoutID int64) tgbotapi.InlineKeyboardMarkup {
+	id := strconv.FormatInt(workoutID, 10)
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("✅ Удалить", "workout:"+id+":delete"),
+			tgbotapi.NewInlineKeyboardButtonData("❌ Нет", "workout:"+id+":detail"),
 		),
 	)
 }

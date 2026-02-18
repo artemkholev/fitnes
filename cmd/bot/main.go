@@ -138,6 +138,10 @@ func handleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 		handleExRepsCallback(b, callback, id, action, chatID, messageID)
 	case "ex_weight":
 		handleExWeightCallback(b, callback, id, action, chatID, messageID)
+	case "date":
+		handleDateCallback(b, callback, action, accessInfo, chatID, messageID)
+	case "workout":
+		handleWorkoutCallback(b, callback, id, action, chatID, messageID)
 	default:
 		log.Printf("Unknown callback prefix: %s", prefix)
 	}
@@ -231,10 +235,17 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 		clientTelegramID = callback.From.ID
 	}
 
+	workoutDate := time.Now()
+	if state.Data != nil {
+		if d, ok := state.Data["workout_date"].(time.Time); ok {
+			workoutDate = d
+		}
+	}
+
 	workout := &models.Workout{
 		TrainerClientID:  trainerClientID,
 		ClientTelegramID: clientTelegramID,
-		Date:             time.Now(),
+		Date:             workoutDate,
 		MuscleGroup:      muscleGroup,
 	}
 
@@ -351,6 +362,11 @@ func handleExWeightCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int
 	if action == "other" {
 		state.Data["step"] = "weight_custom"
 		b.EditMessageText(chatID, messageID, "Введите вес в кг (например: 80 или 72.5):", nil)
+		return
+	}
+
+	if action == "bodyweight" {
+		handlers.SaveExerciseStep(b, callback.From.ID, chatID, messageID, 0, true)
 		return
 	}
 
@@ -477,20 +493,45 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 
 	case "workout":
 		b.CleanupMessages(chatID, callback.From.ID)
-		b.SetState(callback.From.ID, "awaiting_muscle_group", map[string]interface{}{
+		b.SetState(callback.From.ID, "awaiting_workout_date", map[string]interface{}{
 			"trainer_id":         trainerID,
 			"org_id":             orgID,
 			"org_name":           orgName,
 			"client":             client,
 			"trainer_client_id":  client.Client.ID,
-			"client_telegram_id": client.Client.TelegramID, // *int64, nil если клиент не запускал бота
+			"client_telegram_id": client.Client.TelegramID,
 		})
-		keyboard := bot.GetInlineMuscleGroupKeyboard()
-		msgID := b.SendInlineKeyboard(chatID, "➕ *Создание тренировки для @"+bot.EscapeMarkdown(client.Client.Username)+"*\n\nВыберите группу мышц:", keyboard)
+		keyboard := bot.GetInlineDateKeyboard()
+		msgID := b.SendInlineKeyboard(chatID, "➕ *Создание тренировки для @"+bot.EscapeMarkdown(client.Client.Username)+"*\n\nВыберите дату тренировки:", keyboard)
 		b.StoreMessageID(callback.From.ID, msgID)
 
 	case "history":
-		b.EditMessageText(chatID, messageID, "📋 История тренировок @"+bot.EscapeMarkdown(client.Client.Username)+" будет добавлена позже.", nil)
+		workouts, err := b.DB.GetWorkoutsByTrainerClient(client.Client.ID, 20)
+		if err != nil {
+			log.Printf("Error getting client workouts: %v", err)
+			b.EditMessageText(chatID, messageID, "❌ Ошибка при получении истории тренировок.", nil)
+			return
+		}
+		if len(workouts) == 0 {
+			b.EditMessageText(chatID, messageID, "📋 У @"+bot.EscapeMarkdown(client.Client.Username)+" пока нет тренировок.", nil)
+			return
+		}
+		exerciseCounts := make(map[int64]int)
+		for _, w := range workouts {
+			exercises, _ := b.DB.GetExercisesByWorkout(w.ID)
+			exerciseCounts[w.ID] = len(exercises)
+		}
+		b.SetState(callback.From.ID, "viewing_client_workouts", map[string]interface{}{
+			"trainer_id":      trainerID,
+			"org_id":          orgID,
+			"org_name":        orgName,
+			"client":          client,
+			"workouts":        workouts,
+			"exercise_counts": exerciseCounts,
+			"is_trainer_view": true,
+		})
+		listKeyboard := bot.GetInlineWorkoutsKeyboard(workouts, exerciseCounts)
+		b.EditMessageText(chatID, messageID, "📋 *История тренировок @"+bot.EscapeMarkdown(client.Client.Username)+"*", &listKeyboard)
 
 	case "delete":
 		if !client.Client.IsActive {
@@ -960,6 +1001,19 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		}
 
 	// ===== ТРЕНИРОВКИ =====
+	case "awaiting_workout_date":
+		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			b.ClearState(message.From.ID)
+			b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
+			return
+		}
+		step, _ := bot.GetStateString(state.Data, "step")
+		if step == "date_custom" {
+			handlers.HandleWorkoutDateCustom(b, message)
+		}
+	case "viewing_workouts", "viewing_client_workouts":
+		// Всё управление через inline-кнопки
 	case "awaiting_muscle_group":
 		handlers.HandleMuscleGroupSelection(b, message)
 	case "adding_exercises":
@@ -1113,6 +1167,135 @@ func handleTrainerOrgActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *
 	default:
 		b.SendMessage(message.Chat.ID, "Выберите действие из меню.")
 	}
+}
+
+// handleDateCallback обрабатывает выбор даты тренировки.
+func handleDateCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action string, accessInfo *models.AccessInfo, chatID int64, messageID int) {
+	state := b.GetState(callback.From.ID)
+	if state == nil {
+		return
+	}
+
+	switch action {
+	case "cancel":
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
+		b.SendMessageWithKeyboard(chatID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
+	case "today":
+		state.Data["workout_date"] = time.Now()
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.SetState(callback.From.ID, "awaiting_muscle_group", state.Data)
+		keyboard := bot.GetInlineMuscleGroupKeyboard()
+		msgID := b.SendInlineKeyboard(chatID, "🏋️ Выберите группу мышц:", keyboard)
+		b.StoreMessageID(callback.From.ID, msgID)
+	case "other":
+		state.Data["step"] = "date_custom"
+		b.EditMessageText(chatID, messageID, "📅 Введите дату тренировки в формате ДД.ММ.ГГГГ\n(например: 15.01.2025):", nil)
+	}
+}
+
+// handleWorkoutCallback обрабатывает просмотр и удаление тренировок.
+func handleWorkoutCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
+	state := b.GetState(callback.From.ID)
+
+	switch action {
+	case "close":
+		b.DeleteMessage(chatID, messageID)
+		b.ClearState(callback.From.ID)
+
+	case "back":
+		if state == nil {
+			b.DeleteMessage(chatID, messageID)
+			return
+		}
+		workouts, _ := state.Data["workouts"].([]*models.Workout)
+		exerciseCounts, _ := state.Data["exercise_counts"].(map[int64]int)
+		if len(workouts) == 0 {
+			b.EditMessageText(chatID, messageID, "У вас пока нет тренировок.", nil)
+			return
+		}
+		keyboard := bot.GetInlineWorkoutsKeyboard(workouts, exerciseCounts)
+		title := "📝 *Ваши тренировки:*"
+		if isTrainer, _ := state.Data["is_trainer_view"].(bool); isTrainer {
+			if client, ok := state.Data["client"].(*models.ClientWithInfo); ok && client != nil {
+				title = "📋 *История тренировок @" + bot.EscapeMarkdown(client.Client.Username) + "*"
+			}
+		}
+		b.EditMessageText(chatID, messageID, title, &keyboard)
+
+	case "detail":
+		if state == nil {
+			return
+		}
+		workout, exercises := getWorkoutWithExercises(b, id, state)
+		if workout == nil {
+			b.AnswerCallback(callback.ID, "Тренировка не найдена")
+			return
+		}
+		text := handlers.FormatWorkoutDetail(workout, exercises)
+		canDelete := true
+		if isTrainer, _ := state.Data["is_trainer_view"].(bool); isTrainer {
+			canDelete = false
+		}
+		keyboard := bot.GetInlineWorkoutActionsKeyboard(id, canDelete)
+		b.EditMessageText(chatID, messageID, text, &keyboard)
+
+	case "delete_ask":
+		keyboard := bot.GetInlineWorkoutDeleteConfirmKeyboard(id)
+		b.EditMessageText(chatID, messageID, "⚠️ Удалить эту тренировку? Это действие необратимо.", &keyboard)
+
+	case "delete":
+		if err := b.DB.DeleteWorkout(id); err != nil {
+			log.Printf("Error deleting workout %d: %v", id, err)
+			b.AnswerCallback(callback.ID, "Ошибка при удалении")
+			return
+		}
+		// Убираем удалённую тренировку из state
+		if state != nil {
+			if workouts, ok := state.Data["workouts"].([]*models.Workout); ok {
+				updated := make([]*models.Workout, 0, len(workouts))
+				for _, w := range workouts {
+					if w.ID != id {
+						updated = append(updated, w)
+					}
+				}
+				state.Data["workouts"] = updated
+				if ec, ok := state.Data["exercise_counts"].(map[int64]int); ok {
+					delete(ec, id)
+				}
+				if len(updated) == 0 {
+					b.EditMessageText(chatID, messageID, "✅ Тренировка удалена. Тренировок больше нет.", nil)
+					b.ClearState(callback.From.ID)
+					return
+				}
+				exerciseCounts, _ := state.Data["exercise_counts"].(map[int64]int)
+				keyboard := bot.GetInlineWorkoutsKeyboard(updated, exerciseCounts)
+				b.EditMessageText(chatID, messageID, "✅ Тренировка удалена.\n\n📝 *Ваши тренировки:*", &keyboard)
+			}
+		}
+	}
+}
+
+// getWorkoutWithExercises ищет тренировку по ID в state.Data и загружает упражнения.
+func getWorkoutWithExercises(b *bot.Bot, id int64, state *models.UserState) (*models.Workout, []*models.Exercise) {
+	var found *models.Workout
+	if workouts, ok := state.Data["workouts"].([]*models.Workout); ok {
+		for _, w := range workouts {
+			if w.ID == id {
+				found = w
+				break
+			}
+		}
+	}
+	if found == nil {
+		var err error
+		found, err = b.DB.GetWorkoutByID(id)
+		if err != nil {
+			return nil, nil
+		}
+	}
+	exercises, _ := b.DB.GetExercisesByWorkout(id)
+	return found, exercises
 }
 
 func handleClientActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *models.AccessInfo) {
