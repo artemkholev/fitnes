@@ -771,6 +771,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		handlers.HandleCreateOrganizationCode(b, message)
 	case "admin_selecting_org":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handlers.HandleAdminMenu(b, message)
 			return
@@ -778,7 +779,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleSelectOrganization(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер организации или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handlers.HandleAdminMenu(b, message)
 		}
 	case "admin_managing_org":
 		handleAdminOrgActions(b, message, accessInfo)
@@ -788,6 +790,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if message.Text == "❌ Отмена" {
 			orgID, okID := bot.GetStateInt64(state.Data, "org_id")
 			orgName, okName := bot.GetStateString(state.Data, "org_name")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			if !okID || !okName {
 				b.ClearState(message.From.ID)
 				handlers.HandleAdminMenu(b, message)
@@ -802,15 +805,13 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 				bot.GetOrgManageKeyboard())
 			return
 		}
-		if idx, err := strconv.Atoi(message.Text); err == nil {
-			handlers.HandleRemoveManager(b, message, idx)
-		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер менеджера для удаления или нажмите «❌ Отмена»")
-		}
+		b.CleanupMessages(message.Chat.ID, message.From.ID)
+		handleAdminOrgActions(b, message, accessInfo)
 
 	// ===== МЕНЕДЖЕР =====
 	case "manager_selecting_org":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handleStartCommand(b, message, accessInfo)
 			return
@@ -818,7 +819,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleManagerSelectOrg(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер организации или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 	case "manager_managing_org":
 		handleManagerOrgActions(b, message, accessInfo)
@@ -828,6 +830,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if message.Text == "❌ Отмена" {
 			orgID, okID := bot.GetStateInt64(state.Data, "org_id")
 			orgName, okName := bot.GetStateString(state.Data, "org_name")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			if !okID || !okName {
 				b.ClearState(message.From.ID)
 				handleStartCommand(b, message, accessInfo)
@@ -842,15 +845,13 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 				bot.GetManagerMenuKeyboard())
 			return
 		}
-		if idx, err := strconv.Atoi(message.Text); err == nil {
-			handlers.HandleRemoveTrainer(b, message, idx)
-		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер тренера для удаления или нажмите «❌ Отмена»")
-		}
+		b.CleanupMessages(message.Chat.ID, message.From.ID)
+		handleManagerOrgActions(b, message, accessInfo)
 
 	// ===== ТРЕНЕР =====
 	case "trainer_selecting_org":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handleStartCommand(b, message, accessInfo)
 			return
@@ -858,7 +859,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleTrainerSelectOrg(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер организации или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 	case "trainer_managing_org":
 		handleTrainerOrgActions(b, message, accessInfo)
@@ -870,6 +872,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 			trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
 			orgID, okID := bot.GetStateInt64(state.Data, "org_id")
 			orgName, okName := bot.GetStateString(state.Data, "org_name")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			if !okT || !okID || !okName {
 				b.ClearState(message.From.ID)
 				handleStartCommand(b, message, accessInfo)
@@ -897,7 +900,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(text); err == nil {
 			handlers.HandleSelectClient(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер клиента, «удалить [номер]» или «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleTrainerOrgActions(b, message, accessInfo)
 		}
 	case "trainer_client_action":
 		if idx, err := strconv.Atoi(message.Text); err == nil {
@@ -909,6 +913,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 	// ===== КЛИЕНТ =====
 	case "client_selecting_trainer":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handleStartCommand(b, message, accessInfo)
 			return
@@ -916,12 +921,14 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleClientSelectTrainer(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер тренера или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 	case "client_with_trainer":
 		handleClientActions(b, message, accessInfo)
 	case "client_viewing_archive":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handleStartCommand(b, message, accessInfo)
 			return
@@ -929,7 +936,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleSelectArchivedTrainer(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер записи или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 
 	// ===== ТРЕНИРОВКИ =====
@@ -972,6 +980,7 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 	// ===== ГРУППОВЫЕ ТРЕНИРОВКИ =====
 	case "joining_group_training":
 		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
 			b.ClearState(message.From.ID)
 			handleStartCommand(b, message, accessInfo)
 			return
@@ -979,7 +988,8 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 		if idx, err := strconv.Atoi(message.Text); err == nil {
 			handlers.HandleJoinGroupTraining(b, message, idx)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер тренировки или нажмите «❌ Отмена»")
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 	case "creating_group_training":
 		handlers.HandleCreateGroupTrainingData(b, message)
