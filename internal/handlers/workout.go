@@ -57,7 +57,7 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 
 	muscleGroup, ok := muscleGroupMap[message.Text]
 	if !ok {
-		b.SendMessageWithKeyboard(message.Chat.ID, "⚠️ Выберите группу мышц из кнопок:", bot.GetMuscleGroupKeyboard())
+		b.SendMessage(message.Chat.ID, "⚠️ Выберите группу мышц из кнопок.")
 		return
 	}
 

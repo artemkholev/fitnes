@@ -251,7 +251,7 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 	})
 
 	b.CleanupMessages(chatID, callback.From.ID)
-	b.SendMessage(chatID, "🏋️ Тренировка создана!\n\nВведите название первого упражнения:")
+	b.SendMessageWithKeyboard(chatID, "🏋️ Тренировка создана!\n\nВведите название первого упражнения:", bot.GetExerciseControlKeyboard())
 }
 
 // handleExSetsCallback обрабатывает выбор количества подходов из inline-клавиатуры.
@@ -436,14 +436,14 @@ func showClientCard(b *bot.Bot, userID, chatID int64, client *models.ClientWithI
 	})
 
 	keyboard := bot.GetInlineClientActionsKeyboard(client.Client.ID, client.Client.IsActive)
-	msgID := b.SendInlineKeyboard(chatID, sb.String(), keyboard)
-	b.StoreMessageID(userID, msgID)
+	b.SendInlineKeyboard(chatID, sb.String(), keyboard)
 }
 
 // handleClientActionCallback обрабатывает действия с клиентом
 func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
 	state := b.GetState(callback.From.ID)
 	if state == nil {
+		b.AnswerCallback(callback.ID, "Сессия истекла, начните заново")
 		return
 	}
 
@@ -459,6 +459,7 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 
 	client, ok := state.Data["client"].(*models.ClientWithInfo)
 	if !ok || client == nil {
+		b.AnswerCallback(callback.ID, "Ошибка: данные клиента не найдены")
 		return
 	}
 
@@ -466,6 +467,7 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
 	orgName, okName := bot.GetStateString(state.Data, "org_name")
 	if !okT || !okID || !okName {
+		b.AnswerCallback(callback.ID, "Ошибка: данные сессии повреждены")
 		return
 	}
 
