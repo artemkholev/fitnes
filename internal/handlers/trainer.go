@@ -225,7 +225,7 @@ func HandleListClients(b *bot.Bot, message *tgbotapi.Message) {
 	})
 }
 
-// HandleSelectClient выбор клиента для просмотра
+// HandleSelectClient выбор клиента для просмотра (текстовый путь — ввод номера)
 func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
 	if state == nil {
@@ -240,8 +240,6 @@ func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	}
 
 	client := clients[idx-1]
-
-	// Очищаем старые сообщения
 	b.CleanupMessages(message.Chat.ID, message.From.ID)
 
 	var sb strings.Builder
@@ -249,39 +247,28 @@ func HandleSelectClient(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	if client.FullName != "" {
 		name = client.FullName
 	}
-
-	// Breadcrumbs
-	orgName, _ := bot.GetStateString(state.Data, "org_name")
-	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "🏋️ Тренер", orgName, "👥 Клиенты", name)
-	sb.WriteString(breadcrumbs)
-
-	sb.WriteString(fmt.Sprintf("Username: @%s\n", client.Client.Username))
+	sb.WriteString("👤 *" + bot.EscapeMarkdown(name) + "*\n")
+	sb.WriteString("@" + client.Client.Username + "\n")
 	sb.WriteString(fmt.Sprintf("Тренировок: %d\n", client.WorkoutCount))
 	if client.LastWorkout != nil {
-		sb.WriteString(fmt.Sprintf("Последняя: %s\n", client.LastWorkout.Format("02.01.2006")))
+		sb.WriteString("Последняя: " + client.LastWorkout.Format("02.01.2006") + "\n")
 	}
-
-	status := "Активен ✅"
-	if !client.Client.IsActive {
-		status = "Деактивирован ❌"
-	}
-	sb.WriteString(fmt.Sprintf("Статус: %s\n", status))
-
-	sb.WriteString("\n*Действия:*\n")
-	sb.WriteString("1. 📊 Статистика клиента\n")
-	sb.WriteString("2. ➕ Создать тренировку\n")
-	sb.WriteString("3. 📋 История тренировок\n")
 	if client.Client.IsActive {
-		sb.WriteString("4. ❌ Удалить клиента\n")
+		sb.WriteString("Статус: Активен ✅")
+	} else {
+		sb.WriteString("Статус: Деактивирован ❌")
 	}
 
-	b.SendMessage(message.Chat.ID, sb.String())
 	b.SetState(message.From.ID, "trainer_client_action", map[string]interface{}{
 		"trainer_id": state.Data["trainer_id"],
 		"org_id":     state.Data["org_id"],
 		"org_name":   state.Data["org_name"],
 		"client":     client,
 	})
+
+	keyboard := bot.GetInlineClientActionsKeyboard(client.Client.ID, client.Client.IsActive)
+	msgID := b.SendInlineKeyboard(message.Chat.ID, sb.String(), keyboard)
+	b.StoreMessageID(message.From.ID, msgID)
 }
 
 // HandleRemoveClientByIndex удаляет клиента по индексу из списка
@@ -321,70 +308,4 @@ func HandleRemoveClientByIndex(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	)
 }
 
-// HandleClientAction обрабатывает действие с клиентом
-func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
-	state := b.GetState(message.From.ID)
-	if state == nil {
-		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния. Попробуйте снова.")
-		return
-	}
 
-	client, ok := state.Data["client"].(*models.ClientWithInfo)
-	if !ok || client == nil {
-		b.SendMessage(message.Chat.ID, "❌ Клиент не выбран.")
-		return
-	}
-
-	trainerID, okT := bot.GetStateInt64(state.Data, "trainer_id")
-	orgID, okID := bot.GetStateInt64(state.Data, "org_id")
-	orgName, okName := bot.GetStateString(state.Data, "org_name")
-	if !okT || !okID || !okName {
-		b.SendMessage(message.Chat.ID, "❌ Ошибка состояния.")
-		return
-	}
-
-	switch action {
-	case 1: // Статистика
-		b.SendMessage(message.Chat.ID, fmt.Sprintf("📊 Статистика клиента @%s будет добавлена позже.", client.Client.Username))
-
-	case 2: // Создать тренировку
-		b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
-			"trainer_id":         trainerID,
-			"org_id":             orgID,
-			"org_name":           orgName,
-			"client":             client,
-			"trainer_client_id":  client.Client.ID,
-			"client_telegram_id": client.Client.TelegramID, // *int64, может быть nil если клиент не запустил бота
-		})
-		keyboard := bot.GetInlineMuscleGroupKeyboard()
-		msgID := b.SendInlineKeyboard(
-			message.Chat.ID,
-			fmt.Sprintf("➕ *Создание тренировки для @%s*\n\nВыберите группу мышц:", client.Client.Username),
-			keyboard,
-		)
-		b.StoreMessageID(message.From.ID, msgID)
-
-	case 3: // История тренировок
-		b.SendMessage(message.Chat.ID, fmt.Sprintf("📋 История тренировок @%s будет добавлена позже.", client.Client.Username))
-
-	case 4: // Удалить клиента
-		if !client.Client.IsActive {
-			b.SendMessage(message.Chat.ID, "❌ Клиент уже деактивирован.")
-			return
-		}
-		if err := b.DB.RemoveClient( trainerID, client.Client.Username); err != nil {
-			log.Printf("Error removing client: %v", err)
-			b.SendMessage(message.Chat.ID, "❌ Ошибка при удалении клиента.")
-			return
-		}
-		showTrainerOrgMenu(b, message, trainerID, orgID, orgName)
-		b.SendMessageWithKeyboard(
-			message.Chat.ID,
-			fmt.Sprintf("✅ Клиент @%s удалён.", client.Client.Username),
-			bot.GetTrainerMenuKeyboard(),
-		)
-
-	default:
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер действия.")
-	}
-}

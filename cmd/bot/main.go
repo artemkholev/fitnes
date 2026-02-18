@@ -382,49 +382,62 @@ func handleClientListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id i
 
 	state := b.GetState(callback.From.ID)
 	if state == nil {
+		b.SendMessage(chatID, "❌ Список устарел. Нажмите «👥 Мои клиенты» ещё раз.")
 		return
 	}
 
 	clients, ok := state.Data["clients"].([]*models.ClientWithInfo)
-	if !ok {
+	if !ok || len(clients) == 0 {
+		b.SendMessage(chatID, "❌ Список клиентов устарел. Нажмите «👥 Мои клиенты» ещё раз.")
 		return
 	}
 
-	// Находим клиента по ID
+	var found *models.ClientWithInfo
 	for _, client := range clients {
 		if client.Client.ID == id {
-			// Показываем информацию о клиенте
-			var sb strings.Builder
-			name := client.Client.Username
-			if client.FullName != "" {
-				name = client.FullName
-			}
-
-			sb.WriteString("👤 *Клиент: " + bot.EscapeMarkdown(name) + "*\n")
-			sb.WriteString("Username: @" + client.Client.Username + "\n")
-			sb.WriteString("Тренировок: " + strconv.Itoa(client.WorkoutCount) + "\n")
-			if client.LastWorkout != nil {
-				sb.WriteString("Последняя: " + client.LastWorkout.Format("02.01.2006") + "\n")
-			}
-
-			status := "Активен ✅"
-			if !client.Client.IsActive {
-				status = "Деактивирован ❌"
-			}
-			sb.WriteString("Статус: " + status)
-
-			b.SetState(callback.From.ID, "trainer_client_action", map[string]interface{}{
-				"trainer_id": state.Data["trainer_id"],
-				"org_id":     state.Data["org_id"],
-				"org_name":   state.Data["org_name"],
-				"client":     client,
-			})
-
-			keyboard := bot.GetInlineClientActionsKeyboard(client.Client.ID, client.Client.IsActive)
-			b.EditMessageText(chatID, messageID, sb.String(), &keyboard)
-			return
+			found = client
+			break
 		}
 	}
+	if found == nil {
+		b.SendMessage(chatID, "❌ Клиент не найден. Обновите список.")
+		return
+	}
+
+	// Удаляем список, показываем карточку клиента новым сообщением внизу чата
+	b.DeleteMessage(chatID, messageID)
+	showClientCard(b, callback.From.ID, chatID, found, state.Data)
+}
+
+// showClientCard отправляет карточку клиента с inline-кнопками действий.
+func showClientCard(b *bot.Bot, userID, chatID int64, client *models.ClientWithInfo, parentData map[string]interface{}) {
+	var sb strings.Builder
+	name := client.Client.Username
+	if client.FullName != "" {
+		name = client.FullName
+	}
+	sb.WriteString("👤 *" + bot.EscapeMarkdown(name) + "*\n")
+	sb.WriteString("@" + client.Client.Username + "\n")
+	sb.WriteString("Тренировок: " + strconv.Itoa(client.WorkoutCount) + "\n")
+	if client.LastWorkout != nil {
+		sb.WriteString("Последняя: " + client.LastWorkout.Format("02.01.2006") + "\n")
+	}
+	if client.Client.IsActive {
+		sb.WriteString("Статус: Активен ✅")
+	} else {
+		sb.WriteString("Статус: Деактивирован ❌")
+	}
+
+	b.SetState(userID, "trainer_client_action", map[string]interface{}{
+		"trainer_id": parentData["trainer_id"],
+		"org_id":     parentData["org_id"],
+		"org_name":   parentData["org_name"],
+		"client":     client,
+	})
+
+	keyboard := bot.GetInlineClientActionsKeyboard(client.Client.ID, client.Client.IsActive)
+	msgID := b.SendInlineKeyboard(chatID, sb.String(), keyboard)
+	b.StoreMessageID(userID, msgID)
 }
 
 // handleClientActionCallback обрабатывает действия с клиентом
@@ -904,10 +917,14 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 			handleTrainerOrgActions(b, message, accessInfo)
 		}
 	case "trainer_client_action":
-		if idx, err := strconv.Atoi(message.Text); err == nil {
-			handlers.HandleClientAction(b, message, idx)
+		// Все действия выполняются через inline-кнопки. При вводе текста
+		// повторно показываем карточку клиента с кнопками.
+		client, ok := state.Data["client"].(*models.ClientWithInfo)
+		if ok && client != nil {
+			showClientCard(b, message.From.ID, message.Chat.ID, client, state.Data)
 		} else {
-			b.SendMessage(message.Chat.ID, "⚠️ Введите номер действия (1-4)")
+			b.ClearState(message.From.ID)
+			handleStartCommand(b, message, accessInfo)
 		}
 
 	// ===== КЛИЕНТ =====
