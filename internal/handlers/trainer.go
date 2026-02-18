@@ -349,11 +349,12 @@ func HandleClientAction(b *bot.Bot, message *tgbotapi.Message, action int) {
 
 	case 2: // Создать тренировку
 		b.SetState(message.From.ID, "awaiting_muscle_group", map[string]interface{}{
-			"trainer_id":        trainerID,
-			"org_id":            orgID,
-			"org_name":          orgName,
-			"client":            client,
-			"trainer_client_id": client.Client.ID,
+			"trainer_id":         trainerID,
+			"org_id":             orgID,
+			"org_name":           orgName,
+			"client":             client,
+			"trainer_client_id":  client.Client.ID,
+			"client_telegram_id": client.Client.TelegramID, // *int64, может быть nil если клиент не запустил бота
 		})
 		keyboard := bot.GetInlineMuscleGroupKeyboard()
 		msgID := b.SendInlineKeyboard(

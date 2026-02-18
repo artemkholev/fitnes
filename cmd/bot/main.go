@@ -78,7 +78,7 @@ func main() {
 	}
 }
 
-// safeHandleUpdate оборачивает handleUpdate с recover для защиты от panic
+// safeHandleUpdate запускает handleUpdate с recover — сбой одного пользователя не роняет весь процесс.
 func safeHandleUpdate(b *bot.Bot, message *tgbotapi.Message) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -90,7 +90,6 @@ func safeHandleUpdate(b *bot.Bot, message *tgbotapi.Message) {
 	handleUpdate(b, message)
 }
 
-// safeHandleCallback оборачивает handleCallback с recover
 func safeHandleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -102,18 +101,13 @@ func safeHandleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 	handleCallback(b, callback)
 }
 
-// handleCallback обрабатывает нажатия на inline-кнопки
 func handleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
-
-	// Отвечаем на callback чтобы убрать "часики"
 	b.AnswerCallback(callback.ID, "")
 
-	// Парсим callback data
 	prefix, id, action := bot.ParseCallbackData(callback.Data)
 
-	// Получаем информацию о доступах
 	username := callback.From.UserName
-	accessInfo, err := b.DB.GetUserAccessInfo( callback.From.ID, username)
+	accessInfo, err := b.DB.GetUserAccessInfo(callback.From.ID, username)
 	if err != nil {
 		log.Printf("Error getting access info in callback: %v", err)
 		return
@@ -138,6 +132,12 @@ func handleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery) {
 		handleTrainerListCallback(b, callback, id, action, chatID, messageID)
 	case "exercise":
 		handleExerciseCallback(b, callback, action, accessInfo, chatID, messageID)
+	case "ex_sets":
+		handleExSetsCallback(b, callback, id, action, chatID, messageID)
+	case "ex_reps":
+		handleExRepsCallback(b, callback, id, action, chatID, messageID)
+	case "ex_weight":
+		handleExWeightCallback(b, callback, id, action, chatID, messageID)
 	default:
 		log.Printf("Unknown callback prefix: %s", prefix)
 	}
@@ -182,13 +182,11 @@ func handleOrgCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, a
 	}
 }
 
-// handleMuscleCallback обрабатывает выбор группы мышц
 func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action string, chatID int64, messageID int) {
-
 	if action == "cancel" {
 		b.CleanupMessages(chatID, callback.From.ID)
 		b.ClearState(callback.From.ID)
-		accessInfo, _ := b.DB.GetUserAccessInfo( callback.From.ID, callback.From.UserName)
+		accessInfo, _ := b.DB.GetUserAccessInfo(callback.From.ID, callback.From.UserName)
 		accessInfo.IsAdmin = b.IsAdmin(callback.From.UserName)
 		b.SendMessageWithKeyboard(chatID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
@@ -215,7 +213,6 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 		return
 	}
 
-	// Извлекаем trainer_client_id если есть
 	var trainerClientID *int64
 	if state.Data != nil {
 		if tcID, ok := bot.GetStateInt64(state.Data, "trainer_client_id"); ok && tcID > 0 {
@@ -223,9 +220,20 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 		}
 	}
 
+	// Берём telegram_id клиента из состояния (для тренера, создающего тренировку клиенту).
+	// Если клиент ещё не запускал бота — его telegram_id неизвестен, используем 0.
+	var clientTelegramID int64
+	if trainerClientID != nil {
+		if tcTID, ok := state.Data["client_telegram_id"].(*int64); ok && tcTID != nil {
+			clientTelegramID = *tcTID
+		}
+	} else {
+		clientTelegramID = callback.From.ID
+	}
+
 	workout := &models.Workout{
 		TrainerClientID:  trainerClientID,
-		ClientTelegramID: callback.From.ID,
+		ClientTelegramID: clientTelegramID,
 		Date:             time.Now(),
 		MuscleGroup:      muscleGroup,
 	}
@@ -237,21 +245,116 @@ func handleMuscleCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action s
 	}
 
 	b.SetState(callback.From.ID, "adding_exercises", map[string]interface{}{
-		"workout_id":  workout.ID,
-		"telegram_id": callback.From.ID,
-		"order":       1,
+		"workout_id": workout.ID,
+		"order":      1,
+		"step":       "name",
 	})
 
-	// Очищаем предыдущие сообщения
 	b.CleanupMessages(chatID, callback.From.ID)
+	b.SendMessage(chatID, "🏋️ Тренировка создана!\n\nВведите название первого упражнения:")
+}
 
-	msgID := b.SendInlineKeyboard(
-		chatID,
-		"✅ Тренировка создана!\n\n*Добавьте упражнение:*\nОтправьте данные в формате:\n```\nНазвание\nПодходы\nПовторения\nВес (кг)\n```\n\nПример:\n```\nЖим лежа\n4\n10\n80\n```",
-		bot.GetInlineFinishKeyboard(),
+// handleExSetsCallback обрабатывает выбор количества подходов из inline-клавиатуры.
+// id содержит выбранное значение; action == "other" переводит в текстовый ввод.
+func handleExSetsCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
+	state := b.GetState(callback.From.ID)
+	if state == nil {
+		return
+	}
+
+	if action == "cancel" {
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
+		accessInfo, _ := b.DB.GetUserAccessInfo(callback.From.ID, callback.From.UserName)
+		accessInfo.IsAdmin = b.IsAdmin(callback.From.UserName)
+		b.SendMessageWithKeyboard(chatID, "❌ Тренировка отменена.", bot.GetStartMenuKeyboard(accessInfo))
+		return
+	}
+
+	if action == "other" {
+		state.Data["step"] = "sets_custom"
+		b.EditMessageText(chatID, messageID, "Введите количество подходов:", nil)
+		return
+	}
+
+	sets := int(id)
+	if sets <= 0 {
+		return
+	}
+
+	name, _ := bot.GetStateString(state.Data, "exercise_name")
+	state.Data["exercise_sets"] = sets
+	state.Data["step"] = "reps"
+
+	keyboard := bot.GetInlineRepsKeyboard()
+	b.EditMessageText(chatID, messageID,
+		"*"+bot.EscapeMarkdown(name)+"* | Подходы: "+strconv.Itoa(sets)+"\n\nВыберите количество повторений:",
+		&keyboard,
 	)
-	// Сохраняем ID нового сообщения
-	b.StoreMessageID(callback.From.ID, msgID)
+}
+
+// handleExRepsCallback обрабатывает выбор количества повторений.
+func handleExRepsCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
+	state := b.GetState(callback.From.ID)
+	if state == nil {
+		return
+	}
+
+	if action == "cancel" {
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
+		accessInfo, _ := b.DB.GetUserAccessInfo(callback.From.ID, callback.From.UserName)
+		accessInfo.IsAdmin = b.IsAdmin(callback.From.UserName)
+		b.SendMessageWithKeyboard(chatID, "❌ Тренировка отменена.", bot.GetStartMenuKeyboard(accessInfo))
+		return
+	}
+
+	if action == "other" {
+		state.Data["step"] = "reps_custom"
+		b.EditMessageText(chatID, messageID, "Введите количество повторений:", nil)
+		return
+	}
+
+	reps := int(id)
+	if reps <= 0 {
+		return
+	}
+
+	name, _ := bot.GetStateString(state.Data, "exercise_name")
+	sets, _ := bot.GetStateInt64(state.Data, "exercise_sets")
+	state.Data["exercise_reps"] = reps
+	state.Data["step"] = "weight"
+
+	keyboard := bot.GetInlineWeightKeyboard()
+	b.EditMessageText(chatID, messageID,
+		"*"+bot.EscapeMarkdown(name)+"* | Подходы: "+strconv.FormatInt(sets, 10)+" | Повт.: "+strconv.Itoa(reps)+"\n\nВыберите вес (кг):",
+		&keyboard,
+	)
+}
+
+// handleExWeightCallback обрабатывает выбор веса и сохраняет упражнение.
+func handleExWeightCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id int64, action string, chatID int64, messageID int) {
+	state := b.GetState(callback.From.ID)
+	if state == nil {
+		return
+	}
+
+	if action == "cancel" {
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
+		accessInfo, _ := b.DB.GetUserAccessInfo(callback.From.ID, callback.From.UserName)
+		accessInfo.IsAdmin = b.IsAdmin(callback.From.UserName)
+		b.SendMessageWithKeyboard(chatID, "❌ Тренировка отменена.", bot.GetStartMenuKeyboard(accessInfo))
+		return
+	}
+
+	if action == "other" {
+		state.Data["step"] = "weight_custom"
+		b.EditMessageText(chatID, messageID, "Введите вес в кг (например: 80 или 72.5):", nil)
+		return
+	}
+
+	handlers.SaveExerciseStep(b, callback.From.ID, chatID, messageID, float64(id), true)
 }
 
 // handleClientListCallback обрабатывает выбор клиента из списка
@@ -360,12 +463,12 @@ func handleClientActionCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id
 	case "workout":
 		b.CleanupMessages(chatID, callback.From.ID)
 		b.SetState(callback.From.ID, "awaiting_muscle_group", map[string]interface{}{
-			"trainer_id":        trainerID,
-			"org_id":            orgID,
-			"org_name":          orgName,
-			"client":            client,
-			"trainer_client_id": client.Client.ID,
-			"telegram_id":       callback.From.ID,
+			"trainer_id":         trainerID,
+			"org_id":             orgID,
+			"org_name":           orgName,
+			"client":             client,
+			"trainer_client_id":  client.Client.ID,
+			"client_telegram_id": client.Client.TelegramID, // *int64, nil если клиент не запускал бота
 		})
 		keyboard := bot.GetInlineMuscleGroupKeyboard()
 		msgID := b.SendInlineKeyboard(chatID, "➕ *Создание тренировки для @"+client.Client.Username+"*\n\nВыберите группу мышц:", keyboard)
@@ -522,15 +625,24 @@ func handleTrainerListCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, id 
 	}
 }
 
-// handleExerciseCallback обрабатывает завершение/отмену добавления упражнений
 func handleExerciseCallback(b *bot.Bot, callback *tgbotapi.CallbackQuery, action string, accessInfo *models.AccessInfo, chatID int64, messageID int) {
-	b.CleanupMessages(chatID, callback.From.ID)
-	b.ClearState(callback.From.ID)
-
-	if action == "finish" {
+	switch action {
+	case "finish":
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
 		b.SendMessageWithKeyboard(chatID, "✅ Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
-	} else {
+	case "cancel":
+		b.CleanupMessages(chatID, callback.From.ID)
+		b.ClearState(callback.From.ID)
 		b.SendMessageWithKeyboard(chatID, "❌ Тренировка отменена.", bot.GetStartMenuKeyboard(accessInfo))
+	case "more":
+		// Удаляем сообщение с кнопками и просим имя следующего упражнения
+		b.DeleteMessage(chatID, messageID)
+		state := b.GetState(callback.From.ID)
+		if state != nil {
+			state.Data["step"] = "name"
+		}
+		b.SendMessage(chatID, "➕ Введите название следующего упражнения:")
 	}
 }
 
@@ -582,6 +694,7 @@ func handleUpdate(b *bot.Bot, message *tgbotapi.Message) {
 }
 
 func handleStartCommand(b *bot.Bot, message *tgbotapi.Message, accessInfo *models.AccessInfo) {
+	b.CleanupMessages(message.Chat.ID, message.From.ID)
 	b.ClearState(message.From.ID)
 
 	// Формируем приветствие
@@ -641,8 +754,10 @@ func handleStartCommand(b *bot.Bot, message *tgbotapi.Message, accessInfo *model
 }
 
 func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState, accessInfo *models.AccessInfo) {
-	// Проверка на "Главное меню" или "Отмена"
 	if message.Text == "🔙 Главное меню" {
+		// Сначала удаляем inline-сообщения, потом чистим состояние.
+		// Обратный порядок сломает очистку — ClearState удалит список ID.
+		b.CleanupMessages(message.Chat.ID, message.From.ID)
 		b.ClearState(message.From.ID)
 		handleStartCommand(b, message, accessInfo)
 		return
@@ -821,7 +936,36 @@ func handleState(b *bot.Bot, message *tgbotapi.Message, state *models.UserState,
 	case "awaiting_muscle_group":
 		handlers.HandleMuscleGroupSelection(b, message)
 	case "adding_exercises":
-		handlers.HandleAddExercise(b, message)
+		// Отмена и завершение обрабатываются здесь независимо от шага
+		if message.Text == "❌ Отмена" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			b.ClearState(message.From.ID)
+			accessInfo2, _ := b.DB.GetUserAccessInfo(message.From.ID, message.From.UserName)
+			accessInfo2.IsAdmin = b.IsAdmin(message.From.UserName)
+			b.SendMessageWithKeyboard(message.Chat.ID, "❌ Тренировка отменена.", bot.GetStartMenuKeyboard(accessInfo2))
+			return
+		}
+		if message.Text == "✅ Завершить" {
+			b.CleanupMessages(message.Chat.ID, message.From.ID)
+			b.ClearState(message.From.ID)
+			accessInfo2, _ := b.DB.GetUserAccessInfo(message.From.ID, message.From.UserName)
+			accessInfo2.IsAdmin = b.IsAdmin(message.From.UserName)
+			b.SendMessageWithKeyboard(message.Chat.ID, "✅ Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo2))
+			return
+		}
+		step, _ := bot.GetStateString(state.Data, "step")
+		switch step {
+		case "", "name":
+			handlers.HandleExerciseName(b, message)
+		case "sets_custom":
+			handlers.HandleExerciseSetsCustom(b, message)
+		case "reps_custom":
+			handlers.HandleExerciseRepsCustom(b, message)
+		case "weight_custom":
+			handlers.HandleExerciseWeightCustom(b, message)
+		default:
+			b.SendMessage(message.Chat.ID, "Используйте кнопки для выбора значения.")
+		}
 	case "awaiting_exercise_name":
 		handlers.HandleExerciseNameForStats(b, message)
 
@@ -917,14 +1061,12 @@ func handleManagerOrgActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *
 	case "📋 Список тренеров":
 		handlers.HandleListTrainers(b, message)
 	case "🔙 Главное меню":
-		b.ClearState(message.From.ID)
 		handleStartCommand(b, message, accessInfo)
 	default:
 		b.SendMessage(message.Chat.ID, "Выберите действие из меню.")
 	}
 }
 
-// handleTrainerOrgActions обрабатывает действия в панели тренера
 func handleTrainerOrgActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *models.AccessInfo) {
 	switch message.Text {
 	case "➕ Добавить клиента":
@@ -933,17 +1075,17 @@ func handleTrainerOrgActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *
 		handlers.HandleListClients(b, message)
 	case "📅 Групповые тренировки":
 		handlers.HandleGroupTrainings(b, message)
+	case "📅 Создать групповую":
+		handlers.HandleCreateGroupTraining(b, message)
 	case "📊 Статистика":
 		handlers.HandleStats(b, message)
 	case "🔙 Главное меню":
-		b.ClearState(message.From.ID)
 		handleStartCommand(b, message, accessInfo)
 	default:
 		b.SendMessage(message.Chat.ID, "Выберите действие из меню.")
 	}
 }
 
-// handleClientActions обрабатывает действия в панели клиента
 func handleClientActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *models.AccessInfo) {
 	switch message.Text {
 	case "➕ Добавить тренировку":
@@ -955,7 +1097,6 @@ func handleClientActions(b *bot.Bot, message *tgbotapi.Message, accessInfo *mode
 	case "📅 Групповые тренировки":
 		handlers.HandleGroupTrainings(b, message)
 	case "🔙 Главное меню":
-		b.ClearState(message.From.ID)
 		handleStartCommand(b, message, accessInfo)
 	default:
 		b.SendMessage(message.Chat.ID, "Выберите действие из меню.")

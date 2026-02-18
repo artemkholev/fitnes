@@ -9,21 +9,17 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// HandleClientMenu показывает меню клиента
 func HandleClientMenu(b *bot.Bot, message *tgbotapi.Message, clientAccess []*models.ClientAccessInfo) {
 	if len(clientAccess) == 0 {
 		b.SendMessage(message.Chat.ID, "❌ У вас нет активных доступов к тренерам.\n\nПопросите тренера добавить вас по @username.")
 		return
 	}
 
-	// Если один тренер - сразу показываем меню
 	if len(clientAccess) == 1 {
-		access := clientAccess[0]
-		showClientTrainerMenu(b, message, access)
+		showClientTrainerMenu(b, message, clientAccess[0])
 		return
 	}
 
-	// Несколько тренеров - показываем выбор
 	var sb strings.Builder
 	sb.WriteString("🏋️ *Выберите тренера:*\n\n")
 
@@ -52,21 +48,22 @@ func showClientTrainerMenu(b *bot.Bot, message *tgbotapi.Message, access *models
 	)
 }
 
-// HandleClientSelectTrainer выбор тренера клиентом
 func HandleClientSelectTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
-	trainers := state.Data["trainers"].([]*models.ClientAccessInfo)
-
-	if idx < 1 || idx > len(trainers) {
-		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список тренеров устарел. Попробуйте /start")
 		return
 	}
 
-	access := trainers[idx-1]
-	showClientTrainerMenu(b, message, access)
+	trainers, ok := state.Data["trainers"].([]*models.ClientAccessInfo)
+	if !ok || len(trainers) == 0 || idx < 1 || idx > len(trainers) {
+		b.SendMessage(message.Chat.ID, "❌ Неверный номер. Попробуйте снова.")
+		return
+	}
+
+	showClientTrainerMenu(b, message, trainers[idx-1])
 }
 
-// HandleArchivedAccess показывает архивные доступы (только просмотр истории)
 func HandleArchivedAccess(b *bot.Bot, message *tgbotapi.Message, archivedAccess []*models.ClientAccessInfo) {
 	if len(archivedAccess) == 0 {
 		b.SendMessage(message.Chat.ID, "📚 У вас нет архивных тренировок.")
@@ -89,23 +86,24 @@ func HandleArchivedAccess(b *bot.Bot, message *tgbotapi.Message, archivedAccess 
 	})
 }
 
-// HandleSelectArchivedTrainer выбор архивного тренера для просмотра истории
 func HandleSelectArchivedTrainer(b *bot.Bot, message *tgbotapi.Message, idx int) {
 	state := b.GetState(message.From.ID)
-	archived := state.Data["archived"].([]*models.ClientAccessInfo)
+	if state == nil {
+		b.SendMessage(message.Chat.ID, "❌ Список устарел. Попробуйте /start")
+		return
+	}
 
-	if idx < 1 || idx > len(archived) {
+	archived, ok := state.Data["archived"].([]*models.ClientAccessInfo)
+	if !ok || len(archived) == 0 || idx < 1 || idx > len(archived) {
 		b.SendMessage(message.Chat.ID, "❌ Неверный номер.")
 		return
 	}
 
 	access := archived[idx-1]
-
-	// TODO: Показать историю тренировок с этим тренером
+	// TODO: показать историю тренировок с этим тренером
 	b.SendMessage(message.Chat.ID, fmt.Sprintf("📋 История тренировок с @%s будет добавлена позже.", access.TrainerUsername))
 }
 
-// HandleNoAccess показывает сообщение для пользователя без доступов
 func HandleNoAccess(b *bot.Bot, message *tgbotapi.Message) {
 	msg := `👋 *Добро пожаловать в FitBot!*
 

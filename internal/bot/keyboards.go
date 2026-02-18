@@ -8,18 +8,15 @@ import (
 	tgbotapi "github.com/go-telegram-bot-api/telegram-bot-api/v5"
 )
 
-// GetStartMenuKeyboard возвращает начальное меню на основе доступов пользователя
 func GetStartMenuKeyboard(accessInfo *models.AccessInfo) tgbotapi.ReplyKeyboardMarkup {
 	var rows [][]tgbotapi.KeyboardButton
 
-	// Админ
 	if accessInfo.IsAdmin {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("👑 Админ-панель"),
 		))
 	}
 
-	// Менеджер - проверяем наличие активных организаций
 	hasActiveManager := false
 	for _, org := range accessInfo.ManagerOrgs {
 		if org.IsActive {
@@ -33,7 +30,6 @@ func GetStartMenuKeyboard(accessInfo *models.AccessInfo) tgbotapi.ReplyKeyboardM
 		))
 	}
 
-	// Тренер - проверяем наличие активных организаций
 	hasActiveTrainer := false
 	for _, org := range accessInfo.TrainerOrgs {
 		if org.IsActive {
@@ -47,21 +43,18 @@ func GetStartMenuKeyboard(accessInfo *models.AccessInfo) tgbotapi.ReplyKeyboardM
 		))
 	}
 
-	// Клиент (активные доступы)
 	if len(accessInfo.ClientAccess) > 0 {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("📝 Мои тренировки"),
 		))
 	}
 
-	// Архивные доступы (только просмотр)
 	if len(accessInfo.ArchivedAccess) > 0 {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("📚 Архив тренировок"),
 		))
 	}
 
-	// Если нет никаких доступов
 	if len(rows) == 0 {
 		rows = append(rows, tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("ℹ️ О боте"),
@@ -71,7 +64,6 @@ func GetStartMenuKeyboard(accessInfo *models.AccessInfo) tgbotapi.ReplyKeyboardM
 	return tgbotapi.NewReplyKeyboard(rows...)
 }
 
-// GetAdminMenuKeyboard возвращает клавиатуру админ-панели
 func GetAdminMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -84,7 +76,6 @@ func GetAdminMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
-// GetOrgManageKeyboard возвращает клавиатуру управления организацией (для админа)
 func GetOrgManageKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -97,7 +88,6 @@ func GetOrgManageKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
-// GetManagerMenuKeyboard возвращает клавиатуру менеджера
 func GetManagerMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -110,7 +100,6 @@ func GetManagerMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
-// GetTrainerMenuKeyboard возвращает клавиатуру тренера
 func GetTrainerMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -119,15 +108,15 @@ func GetTrainerMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 		),
 		tgbotapi.NewKeyboardButtonRow(
 			tgbotapi.NewKeyboardButton("📅 Групповые тренировки"),
-			tgbotapi.NewKeyboardButton("📊 Статистика"),
+			tgbotapi.NewKeyboardButton("📅 Создать групповую"),
 		),
 		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("📊 Статистика"),
 			tgbotapi.NewKeyboardButton("🔙 Главное меню"),
 		),
 	)
 }
 
-// GetClientMenuKeyboard возвращает клавиатуру клиента
 func GetClientMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	return tgbotapi.NewReplyKeyboard(
 		tgbotapi.NewKeyboardButtonRow(
@@ -144,7 +133,7 @@ func GetClientMenuKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
-// GetMainMenuKeyboard - устаревшая функция для совместимости
+// GetMainMenuKeyboard устарела, оставлена для совместимости
 func GetMainMenuKeyboard(isTrainer bool) tgbotapi.ReplyKeyboardMarkup {
 	if isTrainer {
 		return GetTrainerMenuKeyboard()
@@ -193,15 +182,27 @@ func GetCancelKeyboard() tgbotapi.ReplyKeyboardMarkup {
 	)
 }
 
+// GetExerciseControlKeyboard показывается во время добавления упражнений.
+// Позволяет завершить тренировку или отменить её целиком.
+func GetExerciseControlKeyboard() tgbotapi.ReplyKeyboardMarkup {
+	return tgbotapi.NewReplyKeyboard(
+		tgbotapi.NewKeyboardButtonRow(
+			tgbotapi.NewKeyboardButton("✅ Завершить"),
+			tgbotapi.NewKeyboardButton("❌ Отмена"),
+		),
+	)
+}
+
 // ====== INLINE KEYBOARDS ======
 
-// GetInlineOrganizationsKeyboard создаёт inline-клавиатуру для выбора организации
+// GetInlineOrganizationsKeyboard строит список организаций для выбора.
+// Каждая кнопка передаёт ID организации как int через formatCallbackData.
 func GetInlineOrganizationsKeyboard(orgs []*models.Organization, prefix string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for _, org := range orgs {
 		btn := tgbotapi.NewInlineKeyboardButtonData(
 			org.Name,
-			prefix+":"+string(rune(org.ID)),
+			formatCallbackData(prefix, org.ID),
 		)
 		rows = append(rows, tgbotapi.NewInlineKeyboardRow(btn))
 	}
@@ -211,7 +212,6 @@ func GetInlineOrganizationsKeyboard(orgs []*models.Organization, prefix string) 
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// GetInlineListKeyboard создаёт inline-клавиатуру из списка элементов
 func GetInlineListKeyboard(items []string, ids []int64, prefix string) tgbotapi.InlineKeyboardMarkup {
 	var rows [][]tgbotapi.InlineKeyboardButton
 	for i, item := range items {
@@ -233,7 +233,6 @@ func GetInlineListKeyboard(items []string, ids []int64, prefix string) tgbotapi.
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// GetInlineMuscleGroupKeyboard создаёт inline-клавиатуру для выбора группы мышц
 func GetInlineMuscleGroupKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -258,7 +257,6 @@ func GetInlineMuscleGroupKeyboard() tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-// GetInlineClientActionsKeyboard создаёт inline-клавиатуру для действий с клиентом
 func GetInlineClientActionsKeyboard(clientID int64, isActive bool) tgbotapi.InlineKeyboardMarkup {
 	rows := [][]tgbotapi.InlineKeyboardButton{
 		tgbotapi.NewInlineKeyboardRow(
@@ -282,7 +280,6 @@ func GetInlineClientActionsKeyboard(clientID int64, isActive bool) tgbotapi.Inli
 	return tgbotapi.NewInlineKeyboardMarkup(rows...)
 }
 
-// GetInlineConfirmKeyboard создаёт inline-клавиатуру для подтверждения
 func GetInlineConfirmKeyboard(prefix string) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
@@ -292,41 +289,107 @@ func GetInlineConfirmKeyboard(prefix string) tgbotapi.InlineKeyboardMarkup {
 	)
 }
 
-// GetInlineFinishKeyboard создаёт inline-клавиатуру для завершения добавления упражнений
+// GetInlineFinishKeyboard показывается после добавления упражнения.
 func GetInlineFinishKeyboard() tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("✅ Завершить тренировку", "exercise:finish"),
+			tgbotapi.NewInlineKeyboardButtonData("➕ Ещё упражнение", "exercise:more"),
 		),
 		tgbotapi.NewInlineKeyboardRow(
-			tgbotapi.NewInlineKeyboardButtonData("❌ Отменить тренировку", "exercise:cancel"),
+			tgbotapi.NewInlineKeyboardButtonData("✅ Завершить тренировку", "exercise:finish"),
 		),
 	)
 }
 
-// formatCallbackData форматирует callback data с ID
+// GetInlineSetsKeyboard для выбора количества подходов.
+// Числовые кнопки передают значение через id; "other" — переход в текстовый ввод.
+func GetInlineSetsKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("1", "ex_sets:1"),
+			tgbotapi.NewInlineKeyboardButtonData("2", "ex_sets:2"),
+			tgbotapi.NewInlineKeyboardButtonData("3", "ex_sets:3"),
+			tgbotapi.NewInlineKeyboardButtonData("4", "ex_sets:4"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("5", "ex_sets:5"),
+			tgbotapi.NewInlineKeyboardButtonData("6", "ex_sets:6"),
+			tgbotapi.NewInlineKeyboardButtonData("✏️ Своё", "ex_sets:other"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "ex_sets:cancel"),
+		),
+	)
+}
+
+// GetInlineRepsKeyboard для выбора количества повторений.
+func GetInlineRepsKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("6", "ex_reps:6"),
+			tgbotapi.NewInlineKeyboardButtonData("8", "ex_reps:8"),
+			tgbotapi.NewInlineKeyboardButtonData("10", "ex_reps:10"),
+			tgbotapi.NewInlineKeyboardButtonData("12", "ex_reps:12"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("15", "ex_reps:15"),
+			tgbotapi.NewInlineKeyboardButtonData("20", "ex_reps:20"),
+			tgbotapi.NewInlineKeyboardButtonData("25", "ex_reps:25"),
+			tgbotapi.NewInlineKeyboardButtonData("✏️ Своё", "ex_reps:other"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "ex_reps:cancel"),
+		),
+	)
+}
+
+// GetInlineWeightKeyboard для выбора веса в кг.
+func GetInlineWeightKeyboard() tgbotapi.InlineKeyboardMarkup {
+	return tgbotapi.NewInlineKeyboardMarkup(
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("10", "ex_weight:10"),
+			tgbotapi.NewInlineKeyboardButtonData("15", "ex_weight:15"),
+			tgbotapi.NewInlineKeyboardButtonData("20", "ex_weight:20"),
+			tgbotapi.NewInlineKeyboardButtonData("25", "ex_weight:25"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("30", "ex_weight:30"),
+			tgbotapi.NewInlineKeyboardButtonData("40", "ex_weight:40"),
+			tgbotapi.NewInlineKeyboardButtonData("50", "ex_weight:50"),
+			tgbotapi.NewInlineKeyboardButtonData("60", "ex_weight:60"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("70", "ex_weight:70"),
+			tgbotapi.NewInlineKeyboardButtonData("80", "ex_weight:80"),
+			tgbotapi.NewInlineKeyboardButtonData("100", "ex_weight:100"),
+			tgbotapi.NewInlineKeyboardButtonData("✏️ Своё", "ex_weight:other"),
+		),
+		tgbotapi.NewInlineKeyboardRow(
+			tgbotapi.NewInlineKeyboardButtonData("❌ Отмена", "ex_weight:cancel"),
+		),
+	)
+}
+
+// formatCallbackData форматирует callback data с целочисленным ID.
 func formatCallbackData(prefix string, id int64) string {
 	return prefix + ":" + strconv.FormatInt(id, 10)
 }
 
-// ParseCallbackData разбирает callback data и возвращает prefix и id
+// ParseCallbackData разбирает callback data формата "prefix:id[:action]".
+// Если второй сегмент не является числом, он становится action, а id=0.
 func ParseCallbackData(data string) (prefix string, id int64, action string) {
 	parts := strings.Split(data, ":")
 	if len(parts) < 2 {
 		return data, 0, ""
 	}
 	prefix = parts[0]
-	// Пробуем распарсить ID
-	if len(parts) >= 2 {
-		if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
-			id = parsed
-			if len(parts) >= 3 {
-				action = parts[2]
-			}
-		} else {
-			// Если не число, это action
-			action = parts[1]
+	if parsed, err := strconv.ParseInt(parts[1], 10, 64); err == nil {
+		id = parsed
+		if len(parts) >= 3 {
+			action = parts[2]
 		}
+	} else {
+		action = parts[1]
 	}
 	return
 }

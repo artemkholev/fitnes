@@ -13,7 +13,6 @@ import (
 )
 
 func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
-	// Получаем текущее состояние - там может быть trainer_client_id
 	state := b.GetState(message.From.ID)
 	var trainerClientID int64
 
@@ -35,11 +34,10 @@ func HandleAddWorkout(b *bot.Bot, message *tgbotapi.Message) {
 }
 
 func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
-
 	if message.Text == "❌ Отмена" {
 		b.CleanupMessages(message.Chat.ID, message.From.ID)
 		b.ClearState(message.From.ID)
-		accessInfo, _ := b.DB.GetUserAccessInfo( message.From.ID, message.From.UserName)
+		accessInfo, _ := b.DB.GetUserAccessInfo(message.From.ID, message.From.UserName)
 		b.SendMessageWithKeyboard(message.Chat.ID, "Отменено.", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
@@ -59,18 +57,15 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 
 	muscleGroup, ok := muscleGroupMap[message.Text]
 	if !ok {
-		b.SendMessageWithKeyboard(message.Chat.ID, "⚠️ Пожалуйста, выберите группу мышц из кнопок:", bot.GetMuscleGroupKeyboard())
+		b.SendMessageWithKeyboard(message.Chat.ID, "⚠️ Выберите группу мышц из кнопок:", bot.GetMuscleGroupKeyboard())
 		return
 	}
 
-	// Безопасное извлечение trainer_client_id (может быть int64 или *int64)
 	var trainerClientID *int64
 	if state != nil && state.Data != nil {
-		// Пробуем как int64
 		if tcID, ok := bot.GetStateInt64(state.Data, "trainer_client_id"); ok && tcID > 0 {
 			trainerClientID = &tcID
 		}
-		// Пробуем как *int64
 		if tcID, ok := state.Data["trainer_client_id"].(*int64); ok && tcID != nil {
 			trainerClientID = tcID
 		}
@@ -90,68 +85,141 @@ func HandleMuscleGroupSelection(b *bot.Bot, message *tgbotapi.Message) {
 	}
 
 	b.SetState(message.From.ID, "adding_exercises", map[string]interface{}{
-		"workout_id":  workout.ID,
-		"telegram_id": message.From.ID,
-		"order":       1,
+		"workout_id": workout.ID,
+		"order":      1,
+		"step":       "name",
 	})
-
-	breadcrumbs := bot.GetBreadcrumbs("🏠 Главная", "🏋️ Тренировки", "➕ Новая тренировка")
-	text := breadcrumbs + "Добавьте упражнение в формате:\n"+
-		"```\nНазвание\nПодходы\nПовторения\nВес (кг)\n```\n\n"+
-		"Например:\n"+
-		"```\nЖим лежа\n4\n10\n80\n```\n\n"+
-		"Отправьте '✅ Завершить' когда закончите."
 
 	b.SendMessageWithKeyboard(
 		message.Chat.ID,
-		text,
-		bot.GetCancelKeyboard(),
+		"🏋️ Тренировка создана!\n\nВведите название первого упражнения:",
+		bot.GetExerciseControlKeyboard(),
 	)
 }
 
-func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
+// HandleExerciseName обрабатывает ввод названия упражнения.
+// После получения названия показывает inline-клавиатуру для выбора подходов.
+func HandleExerciseName(b *bot.Bot, message *tgbotapi.Message) {
 	state := b.GetState(message.From.ID)
-
-	if message.Text == "❌ Отмена" || message.Text == "✅ Завершить" {
-		b.CleanupMessages(message.Chat.ID, message.From.ID)
-		b.ClearState(message.From.ID)
-		accessInfo, _ := b.DB.GetUserAccessInfo( message.From.ID, message.From.UserName)
-		b.SendMessageWithKeyboard(message.Chat.ID, "✅ Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
-		return
-	}
-
 	if state == nil || state.Data == nil {
 		b.SendMessage(message.Chat.ID, "❌ Ошибка. Начните тренировку заново.")
 		return
 	}
 
 	if len(message.Photo) > 0 {
-		photos := message.Photo
-		photoFileID := photos[len(photos)-1].FileID
-		state.Data["photo_file_id"] = photoFileID
-		b.SendMessage(message.Chat.ID, "📷 Фото сохранено! Теперь отправьте данные упражнения.")
+		b.SendMessage(message.Chat.ID, "📷 Сначала введите название упражнения текстом.")
 		return
 	}
 
-	lines := strings.Split(strings.TrimSpace(message.Text), "\n")
-	if len(lines) < 4 {
-		b.SendMessage(message.Chat.ID, "❌ Неверный формат. Укажите:\n\nНазвание\nПодходы\nПовторения\nВес (кг)")
+	if message.Text == "✅ Завершить" {
+		b.CleanupMessages(message.Chat.ID, message.From.ID)
+		b.ClearState(message.From.ID)
+		accessInfo, _ := b.DB.GetUserAccessInfo(message.From.ID, message.From.UserName)
+		b.SendMessageWithKeyboard(message.Chat.ID, "✅ Тренировка сохранена! 💪", bot.GetStartMenuKeyboard(accessInfo))
 		return
 	}
 
-	name := strings.TrimSpace(lines[0])
-	sets, err1 := strconv.Atoi(strings.TrimSpace(lines[1]))
-	reps, err2 := strconv.Atoi(strings.TrimSpace(lines[2]))
-	weight, err3 := strconv.ParseFloat(strings.TrimSpace(lines[3]), 64)
-
-	if err1 != nil || err2 != nil || err3 != nil {
-		b.SendMessage(message.Chat.ID, "❌ Ошибка в числовых значениях. Проверьте формат:\n\nНазвание\n4\n10\n80")
+	name := strings.TrimSpace(message.Text)
+	if name == "" {
+		b.SendMessage(message.Chat.ID, "Введите название упражнения:")
 		return
 	}
 
+	state.Data["exercise_name"] = name
+	state.Data["step"] = "sets"
+
+	keyboard := bot.GetInlineSetsKeyboard()
+	msgID := b.SendInlineKeyboard(
+		message.Chat.ID,
+		fmt.Sprintf("*%s*\n\nВыберите количество подходов:", bot.EscapeMarkdown(name)),
+		keyboard,
+	)
+	b.StoreMessageID(message.From.ID, msgID)
+}
+
+// HandleExerciseSetsCustom обрабатывает ручной ввод количества подходов.
+func HandleExerciseSetsCustom(b *bot.Bot, message *tgbotapi.Message) {
+	state := b.GetState(message.From.ID)
+	if state == nil {
+		return
+	}
+
+	sets, err := strconv.Atoi(strings.TrimSpace(message.Text))
+	if err != nil || sets <= 0 {
+		b.SendMessage(message.Chat.ID, "⚠️ Введите целое положительное число:")
+		return
+	}
+
+	name, _ := bot.GetStateString(state.Data, "exercise_name")
+	state.Data["exercise_sets"] = sets
+	state.Data["step"] = "reps"
+
+	keyboard := bot.GetInlineRepsKeyboard()
+	msgID := b.SendInlineKeyboard(
+		message.Chat.ID,
+		fmt.Sprintf("*%s* | Подходы: %d\n\nВыберите количество повторений:", bot.EscapeMarkdown(name), sets),
+		keyboard,
+	)
+	b.StoreMessageID(message.From.ID, msgID)
+}
+
+// HandleExerciseRepsCustom обрабатывает ручной ввод количества повторений.
+func HandleExerciseRepsCustom(b *bot.Bot, message *tgbotapi.Message) {
+	state := b.GetState(message.From.ID)
+	if state == nil {
+		return
+	}
+
+	reps, err := strconv.Atoi(strings.TrimSpace(message.Text))
+	if err != nil || reps <= 0 {
+		b.SendMessage(message.Chat.ID, "⚠️ Введите целое положительное число:")
+		return
+	}
+
+	name, _ := bot.GetStateString(state.Data, "exercise_name")
+	sets, _ := bot.GetStateInt64(state.Data, "exercise_sets")
+	state.Data["exercise_reps"] = reps
+	state.Data["step"] = "weight"
+
+	keyboard := bot.GetInlineWeightKeyboard()
+	msgID := b.SendInlineKeyboard(
+		message.Chat.ID,
+		fmt.Sprintf("*%s* | Подходы: %d | Повт.: %d\n\nВыберите вес (кг):", bot.EscapeMarkdown(name), sets, reps),
+		keyboard,
+	)
+	b.StoreMessageID(message.From.ID, msgID)
+}
+
+// HandleExerciseWeightCustom обрабатывает ручной ввод веса.
+func HandleExerciseWeightCustom(b *bot.Bot, message *tgbotapi.Message) {
+	state := b.GetState(message.From.ID)
+	if state == nil {
+		return
+	}
+
+	weight, err := strconv.ParseFloat(strings.TrimSpace(message.Text), 64)
+	if err != nil || weight < 0 {
+		b.SendMessage(message.Chat.ID, "⚠️ Введите вес числом (например: 80 или 72.5):")
+		return
+	}
+
+	SaveExerciseStep(b, message.From.ID, message.Chat.ID, 0, weight, false)
+}
+
+// SaveExerciseStep сохраняет упражнение и показывает кнопки «Ещё» / «Завершить».
+// Если editMsgID > 0, редактирует существующее сообщение; иначе отправляет новое.
+func SaveExerciseStep(b *bot.Bot, userID, chatID int64, editMsgID int, weight float64, editMsg bool) {
+	state := b.GetState(userID)
+	if state == nil {
+		return
+	}
+
+	name, _ := bot.GetStateString(state.Data, "exercise_name")
+	setsVal, _ := bot.GetStateInt64(state.Data, "exercise_sets")
+	repsVal, _ := bot.GetStateInt64(state.Data, "exercise_reps")
 	workoutID, okW := bot.GetStateInt64(state.Data, "workout_id")
 	if !okW {
-		b.SendMessage(message.Chat.ID, "❌ Ошибка. Начните тренировку заново.")
+		b.SendMessage(chatID, "❌ Ошибка. Начните тренировку заново.")
 		return
 	}
 
@@ -160,30 +228,37 @@ func HandleAddExercise(b *bot.Bot, message *tgbotapi.Message) {
 		order = o
 	}
 
-	photoFileID := ""
-	if photo, ok := state.Data["photo_file_id"].(string); ok {
-		photoFileID = photo
-		delete(state.Data, "photo_file_id")
-	}
-
 	exercise := &models.Exercise{
-		WorkoutID:   workoutID,
-		Name:        name,
-		Sets:        sets,
-		Reps:        reps,
-		Weight:      weight,
-		PhotoFileID: photoFileID,
-		Order:       order,
+		WorkoutID: workoutID,
+		Name:      name,
+		Sets:      int(setsVal),
+		Reps:      int(repsVal),
+		Weight:    weight,
+		Order:     order,
 	}
 
 	if err := b.DB.CreateExercise(exercise); err != nil {
 		log.Printf("Error creating exercise: %v", err)
-		b.SendMessage(message.Chat.ID, "❌ Ошибка при сохранении упражнения.")
+		b.SendMessage(chatID, "❌ Ошибка при сохранении упражнения.")
 		return
 	}
 
 	state.Data["order"] = order + 1
-	b.SendMessage(message.Chat.ID, fmt.Sprintf("✅ Упражнение '%s' добавлено!\n\nДобавьте ещё одно или отправьте '✅ Завершить'", name))
+	state.Data["step"] = "name"
+	delete(state.Data, "exercise_name")
+	delete(state.Data, "exercise_sets")
+	delete(state.Data, "exercise_reps")
+
+	text := fmt.Sprintf("✅ *%s* — %d×%d (%.1f кг)\n\nДобавить ещё упражнение?",
+		bot.EscapeMarkdown(name), int(setsVal), int(repsVal), weight)
+	keyboard := bot.GetInlineFinishKeyboard()
+
+	if editMsg && editMsgID > 0 {
+		b.EditMessageText(chatID, editMsgID, text, &keyboard)
+	} else {
+		msgID := b.SendInlineKeyboard(chatID, text, keyboard)
+		b.StoreMessageID(userID, msgID)
+	}
 }
 
 func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
@@ -204,11 +279,11 @@ func HandleMyWorkouts(b *bot.Bot, message *tgbotapi.Message) {
 
 	for _, w := range workouts {
 		exercises, _ := b.DB.GetExercisesByWorkout(w.ID)
-		response.WriteString(fmt.Sprintf("📅 %s - %s\n", w.Date.Format("02.01.2006"), w.MuscleGroup))
+		response.WriteString(fmt.Sprintf("📅 %s — %s\n", w.Date.Format("02.01.2006"), w.MuscleGroup))
 
 		if len(exercises) > 0 {
 			for _, ex := range exercises {
-				response.WriteString(fmt.Sprintf("  • %s: %d x %d (%.1f кг)\n",
+				response.WriteString(fmt.Sprintf("  • %s: %d×%d (%.1f кг)\n",
 					ex.Name, ex.Sets, ex.Reps, ex.Weight))
 			}
 		}

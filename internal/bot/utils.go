@@ -4,31 +4,18 @@ import (
 	"strings"
 )
 
-// escapeMarkdown экранирует символы, которые ломают Markdown форматирование
+// EscapeMarkdown экранирует символы, специальные в Telegram Markdown (V1): _ * ` [
 func EscapeMarkdown(text string) string {
 	replacer := strings.NewReplacer(
 		"_", "\\_",
 		"*", "\\*",
 		"[", "\\[",
-		"]", "\\]",
 		"`", "\\`",
-		"~", "\\~",
-		">", "\\>",
-		"#", "\\#",
-		"+", "\\+",
-		"-", "\\-",
-		"=", "\\=",
-		"|", "\\|",
-		"{", "\\{",
-		"}", "\\}",
-		".", "\\.",
-		"!", "\\!",
 	)
 	return replacer.Replace(text)
 }
 
-// copyStateData создаёт поверхностную копию карты состояния
-// Важно: защищает от случайной мутации общего объекта
+// CopyStateData возвращает поверхностную копию карты состояния.
 func CopyStateData(src map[string]interface{}) map[string]interface{} {
 	if src == nil {
 		return nil
@@ -40,7 +27,8 @@ func CopyStateData(src map[string]interface{}) map[string]interface{} {
 	return dst
 }
 
-// GetStateInt64 безопасно извлекает int64 из данных состояния
+// GetStateInt64 безопасно извлекает int64 из данных состояния.
+// Поддерживает int64, int и float64 (JSON-десериализация хранит числа как float64).
 func GetStateInt64(data map[string]interface{}, key string) (int64, bool) {
 	if data == nil {
 		return 0, false
@@ -61,7 +49,7 @@ func GetStateInt64(data map[string]interface{}, key string) (int64, bool) {
 	}
 }
 
-// GetStateString безопасно извлекает string из данных состояния
+// GetStateString безопасно извлекает string из данных состояния.
 func GetStateString(data map[string]interface{}, key string) (string, bool) {
 	if data == nil {
 		return "", false
